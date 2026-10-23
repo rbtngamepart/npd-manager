@@ -16,6 +16,7 @@ import { stageAutoStatus, stageFinalStatus, summarize } from "@/lib/status";
 import { toTemplate } from "@/lib/templates";
 import { useTourEvents } from "@/components/Tour";
 import { collectDepartments, deptRole } from "@/lib/departments";
+import { makeDeptColor } from "@/lib/deptColors";
 import type { Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -32,6 +33,33 @@ function ProjectPage() {
   const [logs, setLogs] = useState<StageLog[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [deptFilter, setDeptFilter] = useState("");
+  const [colorBy, setColorByState] = useState<"dept" | "status">("dept");
+  const [groupDept, setGroupDeptState] = useState(false);
+  useEffect(() => {
+    try {
+      const c = localStorage.getItem("npd-color-by");
+      if (c === "dept" || c === "status") setColorByState(c);
+      setGroupDeptState(localStorage.getItem("npd-group-dept") === "1");
+    } catch {
+      /* 무시 */
+    }
+  }, []);
+  const setColorBy = (v: "dept" | "status") => {
+    setColorByState(v);
+    try {
+      localStorage.setItem("npd-color-by", v);
+    } catch {
+      /* 무시 */
+    }
+  };
+  const setGroupDept = (v: boolean) => {
+    setGroupDeptState(v);
+    try {
+      localStorage.setItem("npd-group-dept", v ? "1" : "0");
+    } catch {
+      /* 무시 */
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("gantt");
   const [scale, setScale] = useState<"week" | "month">("week");
@@ -225,7 +253,12 @@ function ProjectPage() {
   const sel = stages.find((s) => s.id === selected) ?? null;
   const departments = deptNames;
   const projectDepts = collectDepartments(stages, [], deptNames).filter((d) => stages.some((s) => deptRole(s, d)));
-  const shown = deptFilter ? stages.filter((s) => deptRole(s, deptFilter)) : stages;
+  const colorOf = makeDeptColor(deptNames);
+  const filtered = deptFilter ? stages.filter((s) => deptRole(s, deptFilter)) : stages;
+  const deptOrder = (d: string | null) => (d ? (projectDepts.indexOf(d) + 1 || 999) : 1000);
+  const shown = groupDept
+    ? filtered.slice().sort((a, b) => deptOrder(a.department) - deptOrder(b.department) || a.sort_order - b.sort_order)
+    : filtered;
   const delay = sum.planEnd && sum.forecastEnd ? diffDays(sum.planEnd, sum.forecastEnd) : 0;
   const pm = project.pm_id ? profileById[project.pm_id] : null;
 
@@ -336,6 +369,30 @@ function ProjectPage() {
               </select>
             )}
             {tab === "gantt" && (
+              <>
+                <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="gantt-color" title="막대 색 기준">
+                  {(
+                    [
+                      ["dept", "색: 부서"],
+                      ["status", "색: 상태"],
+                    ] as const
+                  ).map(([k, l]) => (
+                    <button
+                      key={k}
+                      onClick={() => setColorBy(k)}
+                      className={`rounded-md px-2.5 py-1 ${colorBy === k ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-1 text-xs text-slate-600">
+                  <input type="checkbox" checked={groupDept} onChange={(e) => setGroupDept(e.target.checked)} />
+                  부서별로 묶기
+                </label>
+              </>
+            )}
+            {tab === "gantt" && (
               <div className="mr-2 inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="gantt-scale">
                 {(["week", "month"] as const).map((s) => (
                   <button
@@ -394,6 +451,9 @@ function ProjectPage() {
               <Gantt
                 stages={shown}
                 dept={deptFilter || null}
+                colorOf={colorOf}
+                colorBy={colorBy}
+                groupByDept={groupDept}
                 projectStart={project.start_date}
                 scale={scale}
                 canEdit={canEdit}
@@ -402,10 +462,47 @@ function ProjectPage() {
                 onSelect={setSelected}
                 onDates={(sid, start, end) => updateStage(sid, { plan_start: start, plan_end: end })}
               />
+              {projectDepts.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-black/[0.06] px-4 py-2 text-xs" data-tour="dept-legend">
+                  <span className="mr-1 text-[11px] text-slate-500">부서</span>
+                  {projectDepts.map((d) => {
+                    const c = colorOf(d);
+                    const on = deptFilter === d;
+                    const n = stages.filter((s) => s.department === d).length;
+                    const r = stages.filter((s) => (s.related_departments ?? []).includes(d)).length;
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => setDeptFilter(on ? "" : d)}
+                        title={on ? "필터 해제" : `${d}이(가) 담당·협업하는 단계만 보기`}
+                        className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 transition"
+                        style={{
+                          background: on ? c.solid : c.light,
+                          color: on ? "#fff" : c.text,
+                          boxShadow: on ? "none" : `inset 0 0 0 1px ${c.solid}40`,
+                        }}
+                      >
+                        <span className="h-2 w-2 rounded-full" style={{ background: on ? "#fff" : c.solid }} />
+                        {d}
+                        <span className="opacity-70">
+                          {n}
+                          {r ? `+${r}` : ""}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {deptFilter && (
+                    <button className="ml-1 text-[11px] text-slate-500 underline-offset-2 hover:underline" onClick={() => setDeptFilter("")}>
+                      전체 보기
+                    </button>
+                  )}
+                  <span className="ml-auto text-[11px] text-slate-400">숫자: 담당 단계 + 협업 단계 · 누르면 그 부서만</span>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-4 border-t border-black/[0.06] px-4 py-2 text-[11px] text-slate-500">
                 <span className="flex items-center gap-1.5">
                   <span className="h-2.5 w-6 rounded bg-slate-200" />
-                  계획 (채움 = 진행률)
+                  계획 (채움 = {colorBy === "dept" ? "진행률, 색 = 담당부서" : "진행률, 색 = 상태"})
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-1 w-6 rounded bg-ink/70" />
@@ -429,6 +526,7 @@ function ProjectPage() {
             stages={shown}
             dept={deptFilter || null}
             logs={logs}
+            colorOf={colorOf}
             today={today}
             canEdit={canEdit}
             onSelect={setSelected}

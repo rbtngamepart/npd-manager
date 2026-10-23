@@ -1,5 +1,7 @@
 "use client";
 
+import type { DeptColorFn } from "@/lib/deptColors";
+
 /** 연관부서 여러 개 고르기: 관리자가 정한 부서 목록에서 선택 */
 export function DeptPicker({
   value,
@@ -89,20 +91,51 @@ export function DeptSelect({
 }
 
 /** 담당부서 + 연관부서 작게 표시 */
-export function DeptBadges({ owner, related, highlight }: { owner: string | null; related: string[]; highlight?: string | null }) {
+export function DeptBadges({
+  owner,
+  related,
+  highlight,
+  colorOf,
+}: {
+  owner: string | null;
+  related: string[];
+  highlight?: string | null;
+  colorOf?: DeptColorFn;
+}) {
+  const oc = colorOf && owner ? colorOf(owner) : null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
-      <span className={highlight && highlight === owner ? "font-semibold text-ink" : ""}>{owner ?? "—"}</span>
-      {(related ?? []).map((d) => (
+      {oc ? (
         <span
-          key={d}
-          className={`rounded px-1 text-[11px] ring-1 ring-inset ${
-            highlight === d ? "bg-violet-100 text-violet-800 ring-violet-300" : "bg-violet-50 text-violet-600 ring-violet-200"
-          }`}
+          className={`rounded px-1.5 py-px text-[11px] font-medium ${highlight === owner ? "ring-2 ring-offset-1" : ""}`}
+          style={{ background: oc.light, color: oc.text, ["--tw-ring-color" as string]: oc.solid }}
         >
-          +{d}
+          {owner}
         </span>
-      ))}
+      ) : (
+        <span className={highlight && highlight === owner ? "font-semibold text-ink" : ""}>{owner ?? "—"}</span>
+      )}
+      {(related ?? []).map((d) => {
+        const c = colorOf ? colorOf(d) : null;
+        return c ? (
+          <span
+            key={d}
+            className={`inline-flex items-center gap-1 rounded px-1 text-[11px] ${highlight === d ? "font-semibold" : ""}`}
+            style={{ color: c.text, boxShadow: `inset 0 0 0 1px ${c.solid}55` }}
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: c.solid }} />+{d}
+          </span>
+        ) : (
+          <span
+            key={d}
+            className={`rounded px-1 text-[11px] ring-1 ring-inset ${
+              highlight === d ? "bg-violet-100 text-violet-800 ring-violet-300" : "bg-violet-50 text-violet-600 ring-violet-200"
+            }`}
+          >
+            +{d}
+          </span>
+        );
+      })}
     </span>
   );
 }

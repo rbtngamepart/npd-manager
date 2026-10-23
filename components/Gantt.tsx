@@ -6,6 +6,8 @@ import { STATUS_META, stageFinalStatus } from "@/lib/status";
 import type { Stage } from "@/lib/types";
 import { StatusDot } from "./ui";
 import { deptRole } from "@/lib/departments";
+import type { DeptColorFn } from "@/lib/deptColors";
+import { Fragment } from "react";
 
 type Scale = "week" | "month";
 type DragMode = "move" | "start" | "end" | "create";
@@ -35,6 +37,9 @@ export function Gantt({
   onDates,
   dept,
   subtitle,
+  colorOf,
+  colorBy = "status",
+  groupByDept = false,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -48,6 +53,12 @@ export function Gantt({
   dept?: string | null;
   /** 단계 이름 아래 작은 글씨를 바꾸고 싶을 때 */
   subtitle?: (s: Stage) => string;
+  /** 부서 → 색 */
+  colorOf?: DeptColorFn;
+  /** 막대 색 기준 */
+  colorBy?: "status" | "dept";
+  /** 담당부서가 바뀌는 곳에 구분 줄 표시 (stages는 미리 부서순 정렬해서 전달) */
+  groupByDept?: boolean;
 }) {
   const ppd = scale === "week" ? 6 : 3.2; // px per day
   const scroller = useRef<HTMLDivElement>(null);
@@ -252,9 +263,24 @@ export function Gantt({
           const pe = isDrag ? drag.end : s.plan_end;
           const selected = selectedId === s.id;
           const actualEnd = s.actual_end ?? (s.actual_start ? today : null);
+          const dc = colorOf ? colorOf(s.department) : null;
+          const byDept = colorBy === "dept" && dc;
+          const newGroup = groupByDept && (i === 0 || stages[i - 1].department !== s.department);
           return (
+            <Fragment key={s.id}>
+            {newGroup && (
+              <div className="relative z-10 flex border-b border-black/[0.06]" style={{ height: 26, background: dc ? dc.light : "#f1f5f9" }}>
+                <div
+                  className="sticky left-0 flex items-center gap-1.5 px-3 text-xs font-semibold"
+                  style={{ width: LEFT, color: dc?.text, background: dc ? dc.light : "#f1f5f9" }}
+                >
+                  <span className="h-2 w-2 rounded-sm" style={{ background: dc?.solid }} />
+                  {s.department ?? "부서 미지정"}
+                  <span className="font-normal opacity-60">{stages.filter((x) => x.department === s.department).length}</span>
+                </div>
+              </div>
+            )}
             <div
-              key={s.id}
               className={`group relative z-10 flex border-b border-black/[0.05] ${selected ? "bg-brand-50/50" : "hover:bg-slate-50/60"}`}
               style={{ height: ROW }}
             >
@@ -265,6 +291,7 @@ export function Gantt({
                 }`}
                 style={{ width: LEFT }}
               >
+                {dc && <span className="absolute inset-y-0 left-0 w-[4px]" style={{ background: dc.solid }} />}
                 <span className="w-5 shrink-0 text-right text-xs tabular-nums text-slate-400">{i + 1}</span>
                 <StatusDot status={st} />
                 <span className="min-w-0 flex-1">
@@ -274,11 +301,22 @@ export function Gantt({
                       subtitle(s)
                     ) : (
                       <>
-                        {s.department ?? ""}
+                        {dc && s.department ? (
+                          <span className="rounded px-1 py-px font-medium" style={{ background: dc.light, color: dc.text }}>
+                            {s.department}
+                          </span>
+                        ) : (
+                          s.department ?? ""
+                        )}
                         {(s.related_departments ?? []).length > 0 && (
-                          <span className="text-violet-500" title={`연관부서: ${s.related_departments.join(", ")}`}>
-                            {" "}
-                            +{s.related_departments.length === 1 ? s.related_departments[0] : `${s.related_departments.length}개 부서`}
+                          <span className="ml-1 inline-flex items-center gap-0.5 text-slate-500" title={`연관부서: ${s.related_departments.join(", ")}`}>
+                            +
+                            {colorOf
+                              ? s.related_departments.map((d) => (
+                                  <span key={d} className="inline-block h-2 w-2 rounded-full" style={{ background: colorOf(d).solid }} />
+                                ))
+                              : null}
+                            {s.related_departments.length === 1 ? s.related_departments[0] : `${s.related_departments.length}개`}
                           </span>
                         )}
                         {s.plan_start && projectStart
@@ -324,11 +362,15 @@ export function Gantt({
                   <div
                     data-tour={s.id === firstBarId ? "gantt-bar" : undefined}
                     className={`absolute top-[9px] h-[16px] overflow-hidden rounded-md ${
-                      s.skipped ? "bg-slate-200" : "bg-slate-200/80"
+                      byDept ? "" : s.skipped ? "bg-slate-200" : "bg-slate-200/80"
                     } ${canEdit && !s.skipped ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${
                       isDrag ? "ring-2 ring-brand-500" : selected ? "ring-2 ring-ink/70" : ""
                     }`}
-                    style={{ left: x(ps), width: Math.max(ppd, (diffDays(ps, pe) + 1) * ppd) }}
+                    style={{
+                      left: x(ps),
+                      width: Math.max(ppd, (diffDays(ps, pe) + 1) * ppd),
+                      ...(byDept ? { background: dc.light, boxShadow: `inset 0 0 0 1px ${dc.solid}55` } : {}),
+                    }}
                     onPointerDown={(e) => (s.skipped ? undefined : begin(e, s, "move"))}
                     onPointerMove={move}
                     onPointerUp={end}
@@ -339,8 +381,8 @@ export function Gantt({
                     title={`${s.name}\n계획 ${short(ps)} ~ ${short(pe)}${s.progress ? `\n진행률 ${s.progress}%` : ""}`}
                   >
                     <div
-                      className={`h-full ${meta ? meta.bar : "bg-slate-400"} opacity-90`}
-                      style={{ width: `${s.actual_end ? 100 : s.progress}%` }}
+                      className={`h-full ${byDept ? "" : meta ? meta.bar : "bg-slate-400"} opacity-90`}
+                      style={{ width: `${s.actual_end ? 100 : s.progress}%`, ...(byDept ? { background: dc.solid } : {}) }}
                     />
                     {canEdit && !s.skipped && (
                       <>
@@ -378,6 +420,7 @@ export function Gantt({
                 )}
               </div>
             </div>
+            </Fragment>
           );
         })}
       </div>

@@ -6,6 +6,7 @@ import { stageAutoStatus, stageFinalStatus } from "@/lib/status";
 import type { Light, Stage, StageLog } from "@/lib/types";
 import { StatusChip } from "./ui";
 import { DeptBadges } from "./DeptPicker";
+import type { DeptColorFn } from "@/lib/deptColors";
 
 export function ProgressTable({
   stages,
@@ -15,6 +16,7 @@ export function ProgressTable({
   onSelect,
   onQuick,
   dept,
+  colorOf,
 }: {
   stages: Stage[];
   logs: StageLog[];
@@ -23,6 +25,7 @@ export function ProgressTable({
   onSelect: (id: string) => void;
   onQuick: (id: string, patch: Partial<Stage>) => void;
   dept?: string | null;
+  colorOf?: DeptColorFn;
 }) {
   const [only, setOnly] = useState<"all" | "attention" | "check">("all");
 
@@ -88,7 +91,7 @@ export function ProgressTable({
                   <td className="td text-xs tabular-nums text-slate-400">{stages.indexOf(s) + 1}</td>
                   <td className="td font-medium">{s.name}</td>
                   <td className="td text-xs text-slate-600">
-                    <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} />
+                    <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} colorOf={colorOf} />
                   </td>
                   <td className="td whitespace-nowrap text-xs tabular-nums text-slate-600">
                     {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "—"}

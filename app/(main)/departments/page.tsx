@@ -10,6 +10,7 @@ import { DeptBadges } from "@/components/DeptPicker";
 import { ProjectFilter, type ProjectOption } from "@/components/ProjectFilter";
 import { Empty, ProgressBar, StatusChip } from "@/components/ui";
 import { collectDepartments, deptRole } from "@/lib/departments";
+import { makeDeptColor } from "@/lib/deptColors";
 import { short, today as todayFn } from "@/lib/dates";
 import { stageFinalStatus } from "@/lib/status";
 import type { Project, Stage } from "@/lib/types";
@@ -104,6 +105,7 @@ function DepartmentsPage() {
     syncUrl(dept, ids);
   }
 
+  const colorOf = useMemo(() => makeDeptColor(deptNames), [deptNames]);
   const projectById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
   const sel = picked ?? [];
   const inSel = (pid: string) => sel.length === 0 || sel.includes(pid);
@@ -249,6 +251,7 @@ function DepartmentsPage() {
             today={today}
             selectedId={null}
             dept={dept}
+            colorOf={colorOf}
             subtitle={(s) => `${projectById[s.project_id]?.name ?? ""} · ${s.department ?? ""}`}
             onSelect={(id) => {
               const s = stages.find((x) => x.id === id);
@@ -292,7 +295,7 @@ function DepartmentsPage() {
                         <div className="text-xs text-slate-400">{projectById[s.project_id]?.name}</div>
                       </td>
                       <td className="td text-xs text-slate-600">
-                        <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} />
+                        <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} colorOf={colorOf} />
                       </td>
                       <td className="td whitespace-nowrap text-xs tabular-nums text-slate-600">
                         {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "—"}
