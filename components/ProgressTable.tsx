@@ -37,7 +37,7 @@ export function ProgressTable({
   return (
     <div>
       <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
-        <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
+        <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="pt-filter">
           {(
             [
               ["all", "전체"],
@@ -56,7 +56,7 @@ export function ProgressTable({
         </div>
         <span className="ml-auto text-xs text-slate-400">행을 누르면 상세 편집 · 진행 기록을 남길 수 있습니다</span>
       </div>
-      <div className="scroll-thin overflow-x-auto">
+      <div className="scroll-thin overflow-x-auto" data-tour="pt-table">
         <table className="w-full min-w-[1150px]">
           <thead className="bg-slate-50/70">
             <tr>
@@ -74,7 +74,7 @@ export function ProgressTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-black/[0.05]">
-            {rows.map((s) => {
+            {rows.map((s, ri) => {
               const log = lastLog(s.id);
               return (
                 <tr
@@ -94,7 +94,7 @@ export function ProgressTable({
                   <td className="td">
                     <StatusChip status={stageAutoStatus(s, today)} size="sm" />
                   </td>
-                  <td className="td" onClick={(e) => e.stopPropagation()}>
+                  <td className="td" onClick={(e) => e.stopPropagation()} data-tour={ri === 0 ? "pt-quick" : undefined}>
                     <select
                       className="rounded-md border border-transparent bg-transparent py-0.5 text-xs hover:border-black/10 disabled:opacity-100"
                       value={s.pm_status ?? ""}

@@ -311,6 +311,7 @@ export function ImportDialog({
           <li>아래 칸에 붙여넣기(Ctrl+V) → 미리보기 확인 → 가져오기</li>
         </ol>
         <textarea
+          data-tour="imp-text"
           className="input h-32 font-mono text-xs"
           placeholder={"단계\t담당부서\t주요내용(단계 설명)\t계획 시작주차\t계획 기간(주)\t…\n공모전 기획(공모전형)\t게임파트\t…\t1\t2"}
           value={text}
@@ -377,7 +378,7 @@ export function ImportDialog({
           </>
         )}
 
-        <div className="flex flex-wrap items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-4 text-sm" data-tour="imp-mode">
           <span className="text-xs text-slate-500">가져오는 방식</span>
           {existing.length > 0 && (
             <label className="flex items-center gap-1.5">
@@ -403,6 +404,7 @@ export function ImportDialog({
             취소
           </button>
           <button
+            data-tour="imp-run"
             className="btn-primary"
             disabled={busy || picked.length === 0}
             onClick={() => {

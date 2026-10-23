@@ -59,7 +59,7 @@ export default function TemplatesPage() {
           <p className="mt-1 text-sm text-slate-500">새 프로젝트를 만들 때 불러올 단계 구성입니다. 프로젝트 화면의 ⋯ 메뉴에서도 저장할 수 있어요.</p>
         </div>
         {canEdit && (
-          <button className="btn-primary" onClick={() => open(null)}>
+          <button className="btn-primary" onClick={() => open(null)} data-tour="tpl-add">
             + 템플릿
           </button>
         )}
@@ -68,7 +68,7 @@ export default function TemplatesPage() {
       {list.length === 0 ? (
         <Empty>템플릿이 없습니다.</Empty>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-tour="tpl-list">
           {list.map((t) => (
             <div key={t.id} className="card flex flex-col">
               <div className="border-b border-black/[0.06] px-4 py-3">

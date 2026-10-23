@@ -14,6 +14,7 @@ import { Empty, Modal, PmPicker, ProgressBar, StatusChip, Toast } from "@/compon
 import { diffDays, full, relativeTime, short, today as todayFn, weekNumber } from "@/lib/dates";
 import { stageAutoStatus, stageFinalStatus, summarize } from "@/lib/status";
 import { toTemplate } from "@/lib/templates";
+import { useTourEvents } from "@/components/Tour";
 import type { Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -83,6 +84,21 @@ function ProjectPage() {
   }, [id, load]);
 
   const canEdit = !!me && (me.is_game_part || members.some((m) => m.user_id === me.id));
+
+  // 튜토리얼에서 오는 동작
+  useTourEvents((e) => {
+    if (e.type === "tab") setTab(e.tab);
+    if (e.type === "open-stage") {
+      setTab("gantt");
+      const first = stages.find((s) => s.plan_start && !s.skipped) ?? stages[0];
+      if (first) setSelected(first.id);
+    }
+    if (e.type === "close-stage") setSelected(null);
+    if (e.type === "import") {
+      setTab("gantt");
+      setImportOpen(e.open && canEdit);
+    }
+  });
   const sum = useMemo(() => (project ? summarize(project, stages, today) : null), [project, stages, today]);
 
   // ---- 단계 조작 -------------------------------------------------------
@@ -229,14 +245,14 @@ function ProjectPage() {
             {!canEdit && <span className="text-amber-700">보기 전용</span>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-tour="proj-pm">
           <span className="text-xs text-slate-500">PM 판단</span>
           <PmPicker value={project.pm_status} onChange={setProjectPm} disabled={!canEdit} />
         </div>
       </div>
 
       {/* 요약 */}
-      <div className="card grid grid-cols-2 divide-black/[0.06] sm:grid-cols-3 lg:grid-cols-6 lg:divide-x">
+      <div className="card grid grid-cols-2 divide-black/[0.06] sm:grid-cols-3 lg:grid-cols-6 lg:divide-x" data-tour="proj-summary">
         {[
           { l: "계획 완료", v: full(sum.planEnd) },
           { l: "현재 예상 완료", v: full(sum.forecastEnd), sub: delay > 0 ? `+${delay}일 지연` : delay < 0 ? `${-delay}일 단축` : undefined },
@@ -264,7 +280,7 @@ function ProjectPage() {
       </div>
 
       {/* PM 메모 */}
-      <div className="card flex items-start gap-3 px-4 py-2.5">
+      <div className="card flex items-start gap-3 px-4 py-2.5" data-tour="proj-memo">
         <span className="mt-1.5 shrink-0 text-xs font-medium text-slate-500">PM 메모</span>
         <textarea
           rows={1}
@@ -280,7 +296,7 @@ function ProjectPage() {
       {/* 탭 */}
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-black/[0.06] px-3 py-2">
-          <div className="flex gap-1">
+          <div className="flex gap-1" data-tour="proj-tabs">
             {(
               [
                 ["gantt", "일정 (간트)"],
@@ -300,7 +316,7 @@ function ProjectPage() {
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {tab === "gantt" && (
-              <div className="mr-2 inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
+              <div className="mr-2 inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="gantt-scale">
                 {(["week", "month"] as const).map((s) => (
                   <button
                     key={s}
@@ -314,17 +330,17 @@ function ProjectPage() {
             )}
             {canEdit && (tab === "gantt" || tab === "pm") && (
               <>
-                <button className="btn-outline py-1 text-xs" onClick={() => setImportOpen(true)}>
+                <button className="btn-outline py-1 text-xs" onClick={() => setImportOpen(true)} data-tour="import-btn">
                   시트에서 가져오기
                 </button>
-                <button className="btn-primary py-1 text-xs" onClick={addStage}>
+                <button className="btn-primary py-1 text-xs" onClick={addStage} data-tour="add-stage">
                   + 단계
                 </button>
               </>
             )}
             {(tab === "gantt" || tab === "pm") && (
               <details className="relative">
-                <summary className="btn-ghost cursor-pointer list-none px-2 py-1 text-xs">⋯</summary>
+                <summary className="btn-ghost cursor-pointer list-none px-2 py-1 text-xs" data-tour="more-menu">⋯</summary>
                 <div className="absolute right-0 z-30 mt-1 w-44 rounded-lg border border-black/10 bg-white p-1 shadow-lg">
                   <button className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50" onClick={exportCSV}>
                     CSV로 내보내기
@@ -354,7 +370,7 @@ function ProjectPage() {
               </Empty>
             </div>
           ) : (
-            <>
+            <div data-tour="gantt">
               <Gantt
                 stages={stages}
                 projectStart={project.start_date}
@@ -384,7 +400,7 @@ function ProjectPage() {
                 </span>
                 {canEdit && <span className="ml-auto">막대를 끌어서 이동 · 양 끝을 끌어서 기간 조정</span>}
               </div>
-            </>
+            </div>
           ))}
 
         {tab === "pm" && (

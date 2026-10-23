@@ -12,7 +12,7 @@ interface Ctx {
   loading: boolean;
 }
 
-const AppCtx = createContext<Ctx>({
+export const AppCtx = createContext<Ctx>({
   me: null,
   profiles: [],
   profileById: {},

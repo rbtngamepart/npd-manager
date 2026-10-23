@@ -174,6 +174,9 @@ export function Gantt({
     }
   }
 
+  // 튜토리얼이 가리킬 막대: 진행 중이거나 다음에 할 단계
+  const planned = stages.filter((s) => s.plan_start && s.plan_end && !s.skipped);
+  const firstBarId = (planned.find((s) => !s.actual_end && s.plan_end! >= today) ?? planned.find((s) => !s.actual_end) ?? planned[0])?.id;
   const todayX = today >= rangeStart && today <= rangeEnd ? x(today) + ppd / 2 : null;
 
   return (
@@ -297,6 +300,7 @@ export function Gantt({
                 {/* 계획 막대 */}
                 {ps && pe && (
                   <div
+                    data-tour={s.id === firstBarId ? "gantt-bar" : undefined}
                     className={`absolute top-[9px] h-[16px] overflow-hidden rounded-md ${
                       s.skipped ? "bg-slate-200" : "bg-slate-200/80"
                     } ${canEdit && !s.skipped ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${

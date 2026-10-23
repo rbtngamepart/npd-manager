@@ -4,9 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AppProvider, displayName, useApp } from "@/components/AppProvider";
 import { supabase } from "@/lib/supabase/client";
+import { TourProvider, useTour } from "@/components/Tour";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { me, loading } = useApp();
+  const { openMenu } = useTour();
   const path = usePathname();
   const router = useRouter();
 
@@ -65,7 +67,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <span className="grid h-7 w-7 place-items-center rounded-md bg-brand-500 text-xs font-bold text-white">R</span>
             <span className="text-sm font-semibold">게임파트 NPD</span>
           </Link>
-          <nav className="flex gap-1">
+          <nav className="flex gap-1" data-tour="nav">
             {nav.map((n) => {
               const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
               return (
@@ -82,6 +84,14 @@ function Shell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           <div className="ml-auto flex items-center gap-2 text-sm">
+            <button
+              data-tour="help-btn"
+              onClick={openMenu}
+              className="flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+            >
+              <span className="grid h-4 w-4 place-items-center rounded-full bg-brand-500 text-[10px] font-bold text-white">?</span>
+              튜토리얼
+            </button>
             <Link href="/settings" className="hidden items-center gap-2 rounded-md px-2 py-1 hover:bg-black/5 sm:flex">
               <span className="grid h-6 w-6 place-items-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-600">
                 {displayName(me).slice(0, 1)}
@@ -103,7 +113,9 @@ function Shell({ children }: { children: React.ReactNode }) {
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   return (
     <AppProvider>
-      <Shell>{children}</Shell>
+      <TourProvider>
+        <Shell>{children}</Shell>
+      </TourProvider>
     </AppProvider>
   );
 }

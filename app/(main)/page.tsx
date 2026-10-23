@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
+import { tourSeen, markTourSeen, useTour } from "@/components/Tour";
 import { Empty, ProgressBar, StatusChip, StatusDot } from "@/components/ui";
 import { diffDays, full, short, today as todayFn } from "@/lib/dates";
 import { stageFinalStatus, summarize, type AutoStatus } from "@/lib/status";
@@ -19,7 +20,11 @@ export default function Dashboard() {
   const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState<"all" | "attention">("all");
   const [loading, setLoading] = useState(true);
+  const [welcome, setWelcome] = useState(false);
+  const { openMenu, start } = useTour();
   const today = todayFn();
+
+  useEffect(() => setWelcome(!tourSeen()), []);
 
   async function load() {
     const sb = supabase();
@@ -87,13 +92,43 @@ export default function Dashboard() {
           <p className="mt-1 text-sm text-slate-500">계획 대비 예상·실제 진행 상태를 한눈에 봅니다. 기준일 {full(today)}</p>
         </div>
         {me?.is_game_part && (
-          <Link href="/projects/new" className="btn-primary">
+          <Link href="/projects/new" className="btn-primary" data-tour="new-project">
             + 새 프로젝트
           </Link>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      {welcome && (
+        <div className="card flex flex-wrap items-center gap-3 border-brand-500/30 bg-brand-50/40 px-4 py-3">
+          <span className="text-xl">👋</span>
+          <div className="min-w-0 flex-1 text-sm">
+            <b>처음이신가요?</b> 실제 화면을 짚으며 기능을 하나씩 알려드리는 튜토리얼이 있어요. (단원별 1~2분)
+          </div>
+          <button
+            className="btn-ghost text-xs text-slate-500"
+            onClick={() => {
+              markTourSeen();
+              setWelcome(false);
+            }}
+          >
+            다음에
+          </button>
+          <button className="btn-outline text-xs" onClick={openMenu}>
+            단원 고르기
+          </button>
+          <button
+            className="btn-primary text-xs"
+            onClick={() => {
+              setWelcome(false);
+              start("basics");
+            }}
+          >
+            1단원 시작하기
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-tour="tiles">
         {tiles.map((t) => (
           <div key={t.label} className="card px-4 py-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -106,8 +141,8 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-        <section className="card overflow-hidden">
-          <div className="flex flex-wrap items-center gap-2 border-b border-black/[0.06] px-4 py-2.5">
+        <section className="card overflow-hidden" data-tour="project-table">
+          <div className="flex flex-wrap items-center gap-2 border-b border-black/[0.06] px-4 py-2.5" data-tour="dash-filter">
             <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
               {(["all", "attention"] as const).map((f) => (
                 <button
@@ -222,7 +257,7 @@ export default function Dashboard() {
           )}
         </section>
 
-        <aside className="card self-start">
+        <aside className="card self-start" data-tour="attention">
           <div className="border-b border-black/[0.06] px-4 py-3">
             <h2 className="text-sm font-semibold">지금 챙겨야 할 단계</h2>
             <p className="text-xs text-slate-500">차질 · 주의 · 확인 필요</p>

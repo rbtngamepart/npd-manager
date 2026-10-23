@@ -75,7 +75,7 @@ export default function NewProject() {
       <h1 className="mb-5 text-xl font-semibold tracking-tight">새 프로젝트</h1>
       <form onSubmit={create} className="grid gap-6 md:grid-cols-[1fr_1fr]">
         <div className="card space-y-4 p-5">
-          <div>
+          <div data-tour="np-name">
             <label className="label">프로젝트명 *</label>
             <input className="input" required value={name} onChange={(e) => setName(e.target.value)} placeholder="예) 2026 하반기 오리지널게임" />
           </div>
@@ -91,7 +91,7 @@ export default function NewProject() {
                 <option value="고객 행사" />
               </datalist>
             </div>
-            <div>
+            <div data-tour="np-start">
               <label className="label">프로젝트 시작일 (1주차)</label>
               <input type="date" className="input" value={start} onChange={(e) => setStart(e.target.value)} />
             </div>
@@ -100,7 +100,7 @@ export default function NewProject() {
             <label className="label">설명</label>
             <textarea className="input min-h-20" value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
-          <div>
+          <div data-tour="np-template">
             <label className="label">단계 템플릿</label>
             <select className="input" value={tplId} onChange={(e) => setTplId(e.target.value)}>
               {templates.map((t) => (
@@ -117,13 +117,13 @@ export default function NewProject() {
             <button type="button" className="btn-ghost" onClick={() => router.back()}>
               취소
             </button>
-            <button className="btn-primary" disabled={busy || !name.trim()}>
+            <button className="btn-primary" disabled={busy || !name.trim()} data-tour="np-submit">
               {busy ? "만드는 중…" : "프로젝트 만들기"}
             </button>
           </div>
         </div>
 
-        <div className="card overflow-hidden">
+        <div className="card self-start overflow-hidden" data-tour="np-preview">
           <div className="border-b border-black/[0.06] px-4 py-2.5 text-xs font-medium text-slate-500">단계 미리보기</div>
           {preview.length === 0 ? (
             <p className="p-6 text-center text-sm text-slate-400">단계 없이 시작합니다.</p>

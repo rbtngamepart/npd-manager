@@ -128,7 +128,7 @@ export function StagePanel({
 
   return (
     <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[460px] flex-col border-l border-black/10 bg-white shadow-2xl">
-      <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-black/[0.06] px-4 py-3" data-tour="sp-head">
         <span className="text-xs tabular-nums text-slate-400">
           단계 {index + 1}/{total}
         </span>
@@ -176,7 +176,7 @@ export function StagePanel({
           </div>
         </div>
 
-        <section className="space-y-2">
+        <section className="space-y-2" data-tour="sp-plan">
           <h3 className="text-xs font-semibold text-slate-700">계획</h3>
           {projectStart && (
             <div className="grid grid-cols-2 gap-2">
@@ -219,7 +219,7 @@ export function StagePanel({
           {projectStart && <p className="text-[11px] text-slate-400">주차를 입력하면 날짜가 자동 계산되고, 날짜를 고치면 주차가 바뀝니다.</p>}
         </section>
 
-        <section className="space-y-2">
+        <section className="space-y-2" data-tour="sp-actual">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold text-slate-700">실행</h3>
             {canEdit && !f.actual_end && (
@@ -257,7 +257,7 @@ export function StagePanel({
           </div>
         </section>
 
-        <section className="space-y-2">
+        <section className="space-y-2" data-tour="sp-pm">
           <h3 className="text-xs font-semibold text-slate-700">PM 관리</h3>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -273,7 +273,7 @@ export function StagePanel({
             <label className="label">다음 액션</label>
             <textarea className="input min-h-14" disabled={ro} value={f.next_action ?? ""} onChange={(e) => set("next_action", nul(e.target.value))} />
           </div>
-          <div className="flex flex-wrap gap-4 pt-1 text-sm">
+          <div className="flex flex-wrap gap-4 pt-1 text-sm" data-tour="sp-check">
             <label className="flex items-center gap-1.5">
               <input type="checkbox" disabled={ro} checked={f.needs_check} onChange={(e) => set("needs_check", e.target.checked)} />
               확인 필요
@@ -285,7 +285,7 @@ export function StagePanel({
           </div>
         </section>
 
-        <section className="space-y-3 border-t border-black/[0.06] pt-4">
+        <section className="space-y-3 border-t border-black/[0.06] pt-4" data-tour="sp-log">
           <h3 className="text-xs font-semibold text-slate-700">진행 기록</h3>
           {canEdit && (
             <div className="space-y-2">
@@ -351,7 +351,7 @@ export function StagePanel({
       </div>
 
       {canEdit && (
-        <div className="flex items-center gap-2 border-t border-black/[0.06] bg-slate-50/80 px-5 py-3">
+        <div className="flex items-center gap-2 border-t border-black/[0.06] bg-slate-50/80 px-5 py-3" data-tour="sp-save">
           <span className="text-xs text-slate-400">
             {dirty ? "저장하지 않은 변경사항이 있습니다" : `최근 수정 ${short(stage.updated_at.slice(0, 10))}`}
           </span>

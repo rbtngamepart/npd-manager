@@ -40,7 +40,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      <div className="card overflow-x-auto">
+      <div className="card overflow-x-auto" data-tour="admin-table">
         <table className="w-full min-w-[760px]">
           <thead className="bg-slate-50/70">
             <tr>

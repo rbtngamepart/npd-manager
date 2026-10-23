@@ -97,7 +97,7 @@ export function ProjectSettings({
 
   return (
     <div className="grid gap-6 p-5 lg:grid-cols-2">
-      <section className="space-y-3">
+      <section className="space-y-3" data-tour="ps-info">
         <h3 className="text-sm font-semibold">프로젝트 정보</h3>
         <div>
           <label className="label">프로젝트명</label>
@@ -145,7 +145,7 @@ export function ProjectSettings({
       </section>
 
       <section className="space-y-6">
-        <div className="space-y-3">
+        <div className="space-y-3" data-tour="ps-members">
           <div>
             <h3 className="text-sm font-semibold">편집 권한</h3>
             <p className="text-xs text-slate-500">게임파트는 모든 프로젝트를 편집할 수 있습니다. 타부서 담당자는 여기서 추가하면 이 프로젝트만 편집할 수 있습니다.</p>
@@ -192,7 +192,7 @@ export function ProjectSettings({
         </div>
 
         {isGamePart && (
-          <div className="space-y-2 rounded-lg border border-black/[0.07] p-4">
+          <div className="space-y-2 rounded-lg border border-black/[0.07] p-4" data-tour="ps-archive">
             <h3 className="text-sm font-semibold">보관 · 삭제</h3>
             <p className="text-xs text-slate-500">끝난 프로젝트는 보관하면 대시보드에서 숨겨집니다. (기록은 유지)</p>
             <div className="flex gap-2">
