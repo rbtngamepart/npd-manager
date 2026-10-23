@@ -87,3 +87,10 @@ export interface ProjectMember {
   role: "editor";
   added_at: string;
 }
+
+export interface Department {
+  id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}

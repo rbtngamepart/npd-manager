@@ -171,6 +171,11 @@ declare
   msgs text[] := '{}';
   f text := 'MM/DD';
 begin
+  -- 관리자 부서명 일괄 변경 중에는 기록 생략
+  if coalesce(current_setting('npd.skip_log', true), '') = 'on' then
+    new.updated_at := now();
+    return new;
+  end if;
   if new.plan_start is distinct from old.plan_start or new.plan_end is distinct from old.plan_end then
     msgs := msgs || format('계획 %s~%s → %s~%s',
       coalesce(to_char(old.plan_start, f), '-'), coalesce(to_char(old.plan_end, f), '-'),
@@ -316,6 +321,94 @@ select '오리지널게임 개발 (직접기획형)', 'NPD 상세 양식 기준 
   {"name":"베타 타입 제작(고객 플레이 용)","department":"게임파트","description":"고객 및 매장 테스트 플레이에 사용할 베타타입 제작","start_week":null,"weeks":2}
 ]'::jsonb
 where not exists (select 1 from public.templates where name = '오리지널게임 개발 (직접기획형)');
+
+-- ---------------------------------------------------------------------
+-- 부서 목록 (관리자가 사이트의 [사용자 관리 > 부서] 탭에서 관리)
+-- ---------------------------------------------------------------------
+create table if not exists public.departments (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null unique,
+  sort_order int  not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.departments enable row level security;
+drop policy if exists "departments read"  on public.departments;
+drop policy if exists "departments write" on public.departments;
+create policy "departments read"  on public.departments for select using (public.is_approved());
+create policy "departments write" on public.departments for all
+  using (public.is_admin()) with check (public.is_admin());
+
+-- 지금까지 쓰인 부서명을 목록으로 옮겨 담기 (처음 한 번)
+insert into public.departments (name, sort_order)
+select name, (row_number() over (order by case when name = '게임파트' then 0 else 1 end, name))::int - 1
+from (
+  select '게임파트' as name
+  union select '구매물류팀'
+  union select btrim(department) from public.stages where coalesce(btrim(department), '') <> ''
+  union select btrim(unnest(related_departments)) from public.stages
+  union select btrim(department) from public.profiles where coalesce(btrim(department), '') <> ''
+) x
+where coalesce(name, '') <> ''
+on conflict (name) do nothing;
+
+-- 부서명 변경 / 합치기: 단계(담당·연관), 사용자, 템플릿에 한 번에 반영
+create or replace function public.rename_department(old_name text, new_name text)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  n text := btrim(coalesce(new_name, ''));
+begin
+  if not public.is_admin() then
+    raise exception '관리자만 부서명을 바꿀 수 있습니다';
+  end if;
+  if n = '' then
+    raise exception '새 부서명을 입력하세요';
+  end if;
+  if old_name = n then
+    return;
+  end if;
+
+  perform set_config('npd.skip_log', 'on', true);
+
+  if exists (select 1 from public.departments where name = n) then
+    delete from public.departments where name = old_name;          -- 합치기
+  else
+    update public.departments set name = n where name = old_name;  -- 이름 변경
+    if not found then
+      insert into public.departments (name, sort_order)
+      values (n, coalesce((select max(sort_order) + 1 from public.departments), 0));
+    end if;
+  end if;
+
+  update public.stages set department = n where department = old_name;
+  update public.stages
+     set related_departments = array_remove(
+           array(select distinct x from unnest(array_replace(related_departments, old_name, n)) as x),
+           department)
+   where old_name = any(related_departments);
+  update public.stages
+     set related_departments = array_remove(related_departments, department)
+   where department = n and n = any(related_departments);
+  update public.profiles set department = n where department = old_name;
+
+  update public.templates t
+     set stages = coalesce((
+       select jsonb_agg(
+                (case when e->>'department' = old_name then jsonb_set(e, '{department}', to_jsonb(n)) else e end)
+                || case when jsonb_typeof(e->'related_departments') = 'array' then
+                     jsonb_build_object('related_departments', (
+                       select coalesce(jsonb_agg(distinct case when r = old_name then n else r end), '[]'::jsonb)
+                       from jsonb_array_elements_text(e->'related_departments') as r
+                       where (case when r = old_name then n else r end)
+                             is distinct from (case when e->>'department' = old_name then n else e->>'department' end)))
+                   else '{}'::jsonb end
+                order by ord)
+       from jsonb_array_elements(t.stages) with ordinality as x(e, ord)
+     ), '[]'::jsonb)
+   where t.stages::text like '%' || old_name || '%';
+
+  perform set_config('npd.skip_log', 'off', true);
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 8. 실시간 반영 (다른 사람이 수정하면 화면이 자동 갱신)

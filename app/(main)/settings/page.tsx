@@ -4,9 +4,10 @@ import { useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
 import { Toast } from "@/components/ui";
+import { DeptSelect } from "@/components/DeptPicker";
 
 export default function SettingsPage() {
-  const { me, reloadProfiles } = useApp();
+  const { me, reloadProfiles, deptNames } = useApp();
   const [name, setName] = useState(me?.name ?? "");
   const [dept, setDept] = useState(me?.department ?? "");
   const [toast, setToast] = useState<string | null>(null);
@@ -14,7 +15,7 @@ export default function SettingsPage() {
   if (!me) return null;
 
   async function save() {
-    await supabase().from("profiles").update({ name: name.trim() || null, department: dept.trim() || null }).eq("id", me!.id);
+    await supabase().from("profiles").update({ name: name.trim() || null, department: dept || null }).eq("id", me!.id);
     await reloadProfiles();
     setToast("저장했습니다");
     setTimeout(() => setToast(null), 1800);
@@ -34,7 +35,7 @@ export default function SettingsPage() {
         </div>
         <div>
           <label className="label">부서</label>
-          <input className="input" value={dept} onChange={(e) => setDept(e.target.value)} />
+          <DeptSelect value={dept || null} options={deptNames} onChange={(v) => setDept(v ?? "")} />
         </div>
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-500">

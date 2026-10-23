@@ -6,7 +6,7 @@ import { stageAutoStatus } from "@/lib/status";
 import type { LogKind, Profile, Stage, StageLog } from "@/lib/types";
 import { displayName } from "./AppProvider";
 import { PmPicker, StatusChip } from "./ui";
-import { DeptPicker } from "./DeptPicker";
+import { DeptPicker, DeptSelect } from "./DeptPicker";
 
 const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -165,18 +165,14 @@ export function StagePanel({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="label">담당부서</label>
-              <input
-                className="input"
-                list="dept-options"
+              <DeptSelect
+                value={f.department}
+                options={departments}
                 disabled={ro}
-                value={f.department ?? ""}
-                onChange={(e) => set("department", nul(e.target.value))}
+                onChange={(v) =>
+                  setF((p) => ({ ...p, department: v, related_departments: p.related_departments.filter((x) => x !== v) }))
+                }
               />
-              <datalist id="dept-options">
-                {departments.map((d) => (
-                  <option key={d} value={d} />
-                ))}
-              </datalist>
             </div>
             <div>
               <label className="label">담당 / 협의 대상</label>
@@ -194,6 +190,7 @@ export function StagePanel({
               exclude={f.department}
               disabled={ro}
             />
+            {!ro && <p className="mt-1 text-[11px] text-slate-400">찾는 부서가 없으면 관리자에게 요청하세요 (사용자 관리 › 부서)</p>}
           </div>
           <div>
             <label className="label">주요내용 (단계 설명)</label>

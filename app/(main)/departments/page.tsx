@@ -16,7 +16,7 @@ import type { Project, Stage } from "@/lib/types";
 const PREF_KEY = "npd-dept";
 
 function DepartmentsPage() {
-  const { me, profiles } = useApp();
+  const { me, profiles, deptNames } = useApp();
   const router = useRouter();
   const params = useSearchParams();
   const today = todayFn();
@@ -42,8 +42,8 @@ function DepartmentsPage() {
   }, []);
 
   const departments = useMemo(
-    () => collectDepartments(stages, profiles.map((p) => p.department)),
-    [stages, profiles]
+    () => collectDepartments(stages, profiles.map((p) => p.department), deptNames),
+    [stages, profiles, deptNames]
   );
 
   // 처음 선택: 주소 → 지난번 선택 → 내 부서 → 첫 부서

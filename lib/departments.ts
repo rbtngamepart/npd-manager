@@ -12,12 +12,13 @@ export function deptRole(s: Pick<Stage, "department" | "related_departments">, d
   return null;
 }
 
-/** 단계들과 사용자 부서에서 부서 이름을 모음 */
+/** 관리자 부서 목록(base)을 앞에, 데이터에만 있는 부서명을 뒤에 모음 */
 export function collectDepartments(
   stages: Pick<Stage, "department" | "related_departments">[],
-  extra: (string | null | undefined)[] = []
+  extra: (string | null | undefined)[] = [],
+  base: string[] = DEFAULT_DEPARTMENTS
 ): string[] {
-  const set = new Set<string>(DEFAULT_DEPARTMENTS);
+  const set = new Set<string>(base);
   stages.forEach((s) => {
     if (s.department) set.add(s.department.trim());
     (s.related_departments ?? []).forEach((d) => d && set.add(d.trim()));

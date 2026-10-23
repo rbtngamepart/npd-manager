@@ -24,14 +24,13 @@ function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
   const router = useRouter();
-  const { me, profiles, profileById } = useApp();
+  const { me, profiles, profileById, deptNames } = useApp();
   const today = todayFn();
 
   const [project, setProject] = useState<Project | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
   const [logs, setLogs] = useState<StageLog[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [deptRows, setDeptRows] = useState<Pick<Stage, "department" | "related_departments">[]>([]);
   const [deptFilter, setDeptFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("gantt");
@@ -50,19 +49,17 @@ function ProjectPage() {
 
   const load = useCallback(async () => {
     const sb = supabase();
-    const [p, s, l, m, d] = await Promise.all([
+    const [p, s, l, m] = await Promise.all([
       sb.from("projects").select("*").eq("id", id).maybeSingle(),
       sb.from("stages").select("*").eq("project_id", id).order("sort_order").order("plan_start"),
       sb.from("stage_logs").select("*").eq("project_id", id).order("created_at", { ascending: false }).limit(500),
       sb.from("project_members").select("*").eq("project_id", id),
-      sb.from("stages").select("department,related_departments"),
     ]);
     setProject(p.data as Project | null);
     setMemo((p.data as Project | null)?.pm_memo ?? "");
     setStages((s.data ?? []) as Stage[]);
     setLogs((l.data ?? []) as StageLog[]);
     setMembers((m.data ?? []) as ProjectMember[]);
-    setDeptRows((d.data ?? []) as Pick<Stage, "department" | "related_departments">[]);
     setLoading(false);
   }, [id]);
 
@@ -226,8 +223,8 @@ function ProjectPage() {
     );
 
   const sel = stages.find((s) => s.id === selected) ?? null;
-  const departments = collectDepartments(deptRows.concat(stages), profiles.map((p) => p.department));
-  const projectDepts = collectDepartments(stages).filter((d) => stages.some((s) => deptRole(s, d)));
+  const departments = deptNames;
+  const projectDepts = collectDepartments(stages, [], deptNames).filter((d) => stages.some((s) => deptRole(s, d)));
   const shown = deptFilter ? stages.filter((s) => deptRole(s, deptFilter)) : stages;
   const delay = sum.planEnd && sum.forecastEnd ? diffDays(sum.planEnd, sum.forecastEnd) : 0;
   const pm = project.pm_id ? profileById[project.pm_id] : null;
