@@ -5,6 +5,7 @@ import { relativeTime, short } from "@/lib/dates";
 import { stageAutoStatus, stageFinalStatus } from "@/lib/status";
 import type { Light, Stage, StageLog } from "@/lib/types";
 import { StatusChip } from "./ui";
+import { DeptBadges } from "./DeptPicker";
 
 export function ProgressTable({
   stages,
@@ -13,6 +14,7 @@ export function ProgressTable({
   canEdit,
   onSelect,
   onQuick,
+  dept,
 }: {
   stages: Stage[];
   logs: StageLog[];
@@ -20,6 +22,7 @@ export function ProgressTable({
   canEdit: boolean;
   onSelect: (id: string) => void;
   onQuick: (id: string, patch: Partial<Stage>) => void;
+  dept?: string | null;
 }) {
   const [only, setOnly] = useState<"all" | "attention" | "check">("all");
 
@@ -62,7 +65,7 @@ export function ProgressTable({
             <tr>
               <th className="th w-8">#</th>
               <th className="th">진행단계</th>
-              <th className="th">담당부서</th>
+              <th className="th">담당 · 연관부서</th>
               <th className="th">계획</th>
               <th className="th">자동</th>
               <th className="th">PM 판단</th>
@@ -84,7 +87,9 @@ export function ProgressTable({
                 >
                   <td className="td text-xs tabular-nums text-slate-400">{stages.indexOf(s) + 1}</td>
                   <td className="td font-medium">{s.name}</td>
-                  <td className="td text-slate-600">{s.department ?? "—"}</td>
+                  <td className="td text-xs text-slate-600">
+                    <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} />
+                  </td>
                   <td className="td whitespace-nowrap text-xs tabular-nums text-slate-600">
                     {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "—"}
                     {s.expected_end && s.plan_end && s.expected_end > s.plan_end && (

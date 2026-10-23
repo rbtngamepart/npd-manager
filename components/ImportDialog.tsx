@@ -4,12 +4,14 @@ import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { parseLooseDate, short, weeksToDates } from "@/lib/dates";
 import { emojiToLight } from "@/lib/status";
+import { splitDepartments } from "@/lib/departments";
 import type { Light, Stage } from "@/lib/types";
 import { Modal } from "./ui";
 
 type Key =
   | "name"
   | "department"
+  | "related"
   | "description"
   | "start_week"
   | "weeks"
@@ -42,6 +44,7 @@ const HEADERS: [Key, string[]][] = [
   ["next_action", ["다음액션"]],
   ["assignee", ["담당/협의", "담당협의"]],
   ["needs_check", ["확인필요"]],
+  ["related", ["연관부서", "협업부서", "관련부서", "협의부서"]],
   ["department", ["담당부서"]],
   ["description", ["주요내용"]],
 ];
@@ -66,6 +69,7 @@ interface Row {
   include: boolean;
   name: string;
   department: string | null;
+  related: string[] | null;
   description: string | null;
   plan_start: string | null;
   plan_end: string | null;
@@ -165,6 +169,7 @@ function parse(text: string, projectStart: string | null): { rows: Row[]; mapped
       include: !/개괄/.test(name),
       name,
       department: get("department"),
+      related: get("related") === null ? null : splitDepartments(get("related")),
       description: get("description"),
       plan_start,
       plan_end,
@@ -186,6 +191,7 @@ function parse(text: string, projectStart: string | null): { rows: Row[]; mapped
 const LABEL: Record<Key, string> = {
   name: "단계",
   department: "담당부서",
+  related: "연관부서",
   description: "주요내용",
   start_week: "시작주차",
   weeks: "기간(주)",
@@ -248,6 +254,7 @@ export function ImportDialog({
           if (v !== null && v !== undefined) patch[k] = v as Stage[K];
         };
         put("department", r.department);
+        put("related_departments", r.related);
         put("description", r.description);
         put("plan_start", r.plan_start);
         put("plan_end", r.plan_end);
@@ -360,7 +367,10 @@ export function ImportDialog({
                         />
                       </td>
                       <td className="px-3 py-1.5 font-medium">{r.name}</td>
-                      <td className="px-3 py-1.5">{r.department ?? ""}</td>
+                      <td className="px-3 py-1.5">
+                        {r.department ?? ""}
+                        {r.related?.length ? <span className="text-violet-600"> +{r.related.join(", ")}</span> : null}
+                      </td>
                       <td className="px-3 py-1.5 tabular-nums">{r.plan_start ? `${short(r.plan_start)}~${short(r.plan_end)}` : "—"}</td>
                       <td className="px-3 py-1.5 tabular-nums">
                         {r.actual_start ? short(r.actual_start) : ""}

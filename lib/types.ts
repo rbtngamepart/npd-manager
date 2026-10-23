@@ -32,6 +32,7 @@ export interface Stage {
   sort_order: number;
   name: string;
   department: string | null;
+  related_departments: string[];
   description: string | null;
   plan_start: string | null;
   plan_end: string | null;
@@ -65,6 +66,7 @@ export interface StageLog {
 export interface TemplateStage {
   name: string;
   department?: string | null;
+  related_departments?: string[];
   description?: string | null;
   start_week?: number | null;
   weeks?: number | null;

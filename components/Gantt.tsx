@@ -5,6 +5,7 @@ import { addDays, diffDays, maxDate, minDate, monthStart, nextMonth, short, week
 import { STATUS_META, stageFinalStatus } from "@/lib/status";
 import type { Stage } from "@/lib/types";
 import { StatusDot } from "./ui";
+import { deptRole } from "@/lib/departments";
 
 type Scale = "week" | "month";
 type DragMode = "move" | "start" | "end" | "create";
@@ -32,6 +33,8 @@ export function Gantt({
   selectedId,
   onSelect,
   onDates,
+  dept,
+  subtitle,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -41,6 +44,10 @@ export function Gantt({
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDates: (id: string, start: string, end: string) => void;
+  /** 이 부서 기준으로 담당/협업 표시 */
+  dept?: string | null;
+  /** 단계 이름 아래 작은 글씨를 바꾸고 싶을 때 */
+  subtitle?: (s: Stage) => string;
 }) {
   const ppd = scale === "week" ? 6 : 3.2; // px per day
   const scroller = useRef<HTMLDivElement>(null);
@@ -263,12 +270,27 @@ export function Gantt({
                 <span className="min-w-0 flex-1">
                   <span className={`block truncate text-sm ${s.skipped ? "text-slate-400 line-through" : ""}`}>{s.name}</span>
                   <span className="block truncate text-[11px] text-slate-400">
-                    {s.department ?? ""}
-                    {s.plan_start && projectStart
-                      ? ` · ${weekNumber(projectStart, s.plan_start)}~${weekNumber(projectStart, s.plan_end!)}주`
-                      : ""}
+                    {subtitle ? (
+                      subtitle(s)
+                    ) : (
+                      <>
+                        {s.department ?? ""}
+                        {(s.related_departments ?? []).length > 0 && (
+                          <span className="text-violet-500" title={`연관부서: ${s.related_departments.join(", ")}`}>
+                            {" "}
+                            +{s.related_departments.length === 1 ? s.related_departments[0] : `${s.related_departments.length}개 부서`}
+                          </span>
+                        )}
+                        {s.plan_start && projectStart
+                          ? ` · ${weekNumber(projectStart, s.plan_start)}~${weekNumber(projectStart, s.plan_end!)}주`
+                          : ""}
+                      </>
+                    )}
                   </span>
                 </span>
+                {dept && deptRole(s, dept) === "related" && (
+                  <span className="shrink-0 rounded bg-violet-50 px-1 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200">협업</span>
+                )}
                 {s.needs_check && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" title="확인 필요" />}
               </button>
 

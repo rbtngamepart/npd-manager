@@ -5,7 +5,7 @@
 // event   : 화면에 보내는 동작 (탭 전환, 단계 패널 열기 등)
 // role    : 이 권한이 있을 때만 보여줌
 
-export type TourRoute = "/" | "/projects/new" | "/templates" | "/admin" | "project";
+export type TourRoute = "/" | "/projects/new" | "/templates" | "/admin" | "/departments" | "project";
 export type Role = "editor" | "gamepart" | "admin";
 
 export type TourEvent =
@@ -52,7 +52,7 @@ export const CHAPTERS: Chapter[] = [
         route: "/",
         target: "nav",
         title: "상단 메뉴",
-        body: "· 대시보드: 모든 프로젝트를 한눈에\n· 템플릿: 프로젝트의 기본 단계 구성\n· 사용자 관리: 관리자만 보입니다",
+        body: "· 대시보드: 모든 프로젝트를 한눈에\n· 부서별 일정: 우리 부서가 담당·협업하는 단계만 모아보기\n· 템플릿: 프로젝트의 기본 단계 구성\n· 사용자 관리: 관리자만 보입니다",
       },
       {
         route: "/",
@@ -209,6 +209,12 @@ export const CHAPTERS: Chapter[] = [
       },
       {
         route: "project",
+        target: "dept-filter",
+        title: "부서 필터",
+        body: "특정 부서가 담당하거나 협업하는 단계만 남겨서 볼 수 있어요. 협업으로 들어간 단계에는 보라색 '협업' 표시가 붙습니다.\n(프로젝트에 부서가 2개 이상일 때 나타나요)",
+      },
+      {
+        route: "project",
         target: "add-stage",
         role: "editor",
         title: "단계 추가",
@@ -237,6 +243,12 @@ export const CHAPTERS: Chapter[] = [
         target: "sp-head",
         title: "단계 상세 패널",
         body: "간트의 단계 이름이나 막대, 진행관리 표의 행을 누르면 오른쪽에 이 패널이 열립니다.",
+      },
+      {
+        route: "project",
+        target: "sp-related",
+        title: "연관부서 (함께 검토하는 부서)",
+        body: "여러 부서가 같이 검토하는 단계라면 담당부서는 하나만 두고, 나머지는 연관부서로 추가하세요. 아래 추천 부서를 누르거나 직접 입력 후 Enter.\n\n단계를 부서마다 따로 만들 필요 없이, 이 단계가 연관부서의 '부서별 일정'에도 자동으로 함께 나타납니다. 일정을 바꾸면 모든 부서 화면에 같이 반영돼요.",
       },
       {
         route: "project",
@@ -309,6 +321,26 @@ export const CHAPTERS: Chapter[] = [
     cleanup: [{ type: "tab", tab: "gantt" }],
   },
   {
+    id: "departments",
+    title: "부서별 일정",
+    desc: "우리 부서가 담당·협업하는 단계만",
+    minutes: 1,
+    steps: [
+      {
+        route: "/departments",
+        target: "dept-chips",
+        title: "부서 고르기",
+        body: "부서를 고르면 모든 프로젝트에서 그 부서가 담당하거나 연관부서(협업)로 들어간 단계가 모입니다. 숫자는 아직 안 끝난 단계 수예요.\n\n한 번 고른 부서는 다음에 들어와도 기억합니다.",
+      },
+      {
+        route: "/departments",
+        target: "dept-view",
+        title: "간트 / 목록",
+        body: "· 간트: 여러 프로젝트의 일정을 한 줄로 이어서 보기 (이름 아래 프로젝트명)\n· 목록: 상태·역할(담당/협업)·다음 액션을 표로\n\n단계를 누르면 해당 프로젝트의 단계 상세가 열립니다. 다른 부서와 협의할 때 이 화면을 함께 보면 편해요.",
+      },
+    ],
+  },
+  {
     id: "import",
     title: "구글 시트에서 옮겨오기",
     desc: "기존 시트를 복사·붙여넣기로 이전",
@@ -335,7 +367,7 @@ export const CHAPTERS: Chapter[] = [
         route: "project",
         target: "imp-text",
         title: "② PM 진행관리도 같은 방법으로",
-        body: "'PM 프로젝트 진행관리' 탭도 머리글부터 복사해 붙여넣으면 PM 판단·이슈·다음 액션·확인 필요·누적 메모가 같은 이름의 단계에 합쳐집니다.\n\n(붙여넣으면 아래에 미리보기 표가 나오고, 체크를 풀면 그 줄은 빼고 가져와요. '업무 개괄' 줄은 자동으로 빠집니다.)",
+        body: "'PM 프로젝트 진행관리' 탭도 머리글부터 복사해 붙여넣으면 PM 판단·이슈·다음 액션·확인 필요·누적 메모가 같은 이름의 단계에 합쳐집니다.\n시트에 '연관부서' 열을 만들어 '구매물류팀, 디자인팀'처럼 적어두면 그것도 같이 들어와요.\n\n(붙여넣으면 아래에 미리보기 표가 나오고, 체크를 풀면 그 줄은 빼고 가져와요. '업무 개괄' 줄은 자동으로 빠집니다.)",
       },
       {
         route: "project",

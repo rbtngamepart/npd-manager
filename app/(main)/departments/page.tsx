@@ -1,0 +1,237 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase/client";
+import { useApp } from "@/components/AppProvider";
+import { Gantt } from "@/components/Gantt";
+import { DeptBadges } from "@/components/DeptPicker";
+import { Empty, ProgressBar, StatusChip } from "@/components/ui";
+import { collectDepartments, deptRole } from "@/lib/departments";
+import { short, today as todayFn } from "@/lib/dates";
+import { stageFinalStatus } from "@/lib/status";
+import type { Project, Stage } from "@/lib/types";
+
+const PREF_KEY = "npd-dept";
+
+function DepartmentsPage() {
+  const { me, profiles } = useApp();
+  const router = useRouter();
+  const params = useSearchParams();
+  const today = todayFn();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"gantt" | "list">("gantt");
+  const [scale, setScale] = useState<"week" | "month">("month");
+  const [hideDone, setHideDone] = useState(true);
+  const [dept, setDept] = useState<string>("");
+
+  useEffect(() => {
+    (async () => {
+      const sb = supabase();
+      const [p, s] = await Promise.all([
+        sb.from("projects").select("*").eq("archived", false),
+        sb.from("stages").select("*").order("plan_start", { nullsFirst: false }),
+      ]);
+      setProjects((p.data ?? []) as Project[]);
+      setStages((s.data ?? []) as Stage[]);
+      setLoading(false);
+    })();
+  }, []);
+
+  const departments = useMemo(
+    () => collectDepartments(stages, profiles.map((p) => p.department)),
+    [stages, profiles]
+  );
+
+  // 처음 선택: 주소 → 지난번 선택 → 내 부서 → 첫 부서
+  useEffect(() => {
+    if (dept || !departments.length) return;
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(PREF_KEY);
+    } catch {
+      /* 무시 */
+    }
+    const pick = [params.get("d"), saved, me?.department, departments[0]].find((d) => d && departments.includes(d));
+    setDept(pick ?? departments[0]);
+  }, [departments, dept, params, me]);
+
+  function choose(d: string) {
+    setDept(d);
+    try {
+      localStorage.setItem(PREF_KEY, d);
+    } catch {
+      /* 무시 */
+    }
+    router.replace(`/departments?d=${encodeURIComponent(d)}`);
+  }
+
+  const projectById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
+  const rows = stages
+    .filter((s) => projectById[s.project_id] && !s.skipped && deptRole(s, dept))
+    .filter((s) => !hideDone || !s.actual_end);
+  const counts = (d: string) =>
+    stages.filter((s) => projectById[s.project_id] && !s.skipped && !s.actual_end && deptRole(s, d)).length;
+
+  const ownerN = rows.filter((s) => deptRole(s, dept) === "owner").length;
+  const relatedN = rows.length - ownerN;
+
+  // 간트에 프로젝트명이 보이도록 이름을 바꿔서 전달
+  const ganttRows = rows
+    .slice()
+    .sort((a, b) => (a.plan_start ?? "9999").localeCompare(b.plan_start ?? "9999"));
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">부서별 일정</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          부서를 고르면 모든 프로젝트에서 그 부서가 <b>담당</b>하거나 <b className="text-violet-700">연관부서(협업)</b>로 들어간 단계를 모아 봅니다. 단계는 하나라서 일정을 바꾸면 모든 부서 화면에 같이 반영됩니다.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5" data-tour="dept-chips">
+        {departments.map((d) => {
+          const n = counts(d);
+          return (
+            <button
+              key={d}
+              onClick={() => choose(d)}
+              className={`rounded-full px-3 py-1 text-sm ring-1 ring-inset transition ${
+                dept === d ? "bg-ink text-white ring-ink" : "bg-white text-slate-700 ring-black/10 hover:ring-black/25"
+              }`}
+            >
+              {d}
+              <span className={`ml-1.5 text-xs ${dept === d ? "text-white/60" : "text-slate-400"}`}>{n}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <section className="card overflow-hidden" data-tour="dept-view">
+        <div className="flex flex-wrap items-center gap-3 border-b border-black/[0.06] px-4 py-2.5 text-xs">
+          <span className="text-sm font-semibold">{dept}</span>
+          <span className="text-slate-500">
+            담당 {ownerN} · <span className="text-violet-700">협업 {relatedN}</span>
+          </span>
+          <label className="flex items-center gap-1.5 text-slate-500">
+            <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />
+            완료 단계 숨기기
+          </label>
+          <div className="ml-auto flex gap-2">
+            {view === "gantt" && (
+              <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5">
+                {(["week", "month"] as const).map((s) => (
+                  <button key={s} onClick={() => setScale(s)} className={`rounded-md px-2.5 py-1 ${scale === s ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}>
+                    {s === "week" ? "주" : "월"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5">
+              {(
+                [
+                  ["gantt", "간트"],
+                  ["list", "목록"],
+                ] as const
+              ).map(([k, l]) => (
+                <button key={k} onClick={() => setView(k)} className={`rounded-md px-2.5 py-1 ${view === k ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="p-10 text-center text-sm text-slate-400">불러오는 중…</p>
+        ) : rows.length === 0 ? (
+          <div className="p-6">
+            <Empty>{dept} 부서가 담당하거나 협업하는 {hideDone ? "진행 중인 " : ""}단계가 없습니다.</Empty>
+          </div>
+        ) : view === "gantt" ? (
+          <Gantt
+            stages={ganttRows}
+            projectStart={null}
+            scale={scale}
+            canEdit={false}
+            today={today}
+            selectedId={null}
+            dept={dept}
+            subtitle={(s) => `${projectById[s.project_id]?.name ?? ""} · ${s.department ?? ""}`}
+            onSelect={(id) => {
+              const s = stages.find((x) => x.id === id);
+              if (s) router.push(`/projects/${s.project_id}?stage=${s.id}`);
+            }}
+            onDates={() => {}}
+          />
+        ) : (
+          <div className="scroll-thin overflow-x-auto">
+            <table className="w-full min-w-[900px]">
+              <thead className="bg-slate-50/70">
+                <tr>
+                  <th className="th">상태</th>
+                  <th className="th">역할</th>
+                  <th className="th">프로젝트 · 단계</th>
+                  <th className="th">담당 · 연관부서</th>
+                  <th className="th">계획</th>
+                  <th className="th w-36">진행률</th>
+                  <th className="th">다음 액션 / 이슈</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/[0.05]">
+                {ganttRows.map((s) => {
+                  const role = deptRole(s, dept);
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50/60">
+                      <td className="td">
+                        <StatusChip status={stageFinalStatus(s, today)} size="sm" />
+                      </td>
+                      <td className="td">
+                        {role === "owner" ? (
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">담당</span>
+                        ) : (
+                          <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 ring-1 ring-inset ring-violet-200">협업</span>
+                        )}
+                      </td>
+                      <td className="td">
+                        <Link href={`/projects/${s.project_id}?stage=${s.id}`} className="font-medium hover:text-brand-600">
+                          {s.name}
+                        </Link>
+                        <div className="text-xs text-slate-400">{projectById[s.project_id]?.name}</div>
+                      </td>
+                      <td className="td text-xs text-slate-600">
+                        <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} />
+                      </td>
+                      <td className="td whitespace-nowrap text-xs tabular-nums text-slate-600">
+                        {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "—"}
+                        {s.expected_end && s.plan_end && s.expected_end > s.plan_end && <div className="text-rose-600">예상 {short(s.expected_end)}</div>}
+                      </td>
+                      <td className="td">
+                        <ProgressBar value={s.actual_end ? 100 : s.progress} />
+                      </td>
+                      <td className="td max-w-[260px] text-xs text-slate-600">
+                        <span className="line-clamp-2">{s.next_action || s.issue || "—"}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<p className="py-20 text-center text-sm text-slate-400">불러오는 중…</p>}>
+      <DepartmentsPage />
+    </Suspense>
+  );
+}

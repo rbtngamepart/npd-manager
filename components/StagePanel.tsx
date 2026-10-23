@@ -6,6 +6,7 @@ import { stageAutoStatus } from "@/lib/status";
 import type { LogKind, Profile, Stage, StageLog } from "@/lib/types";
 import { displayName } from "./AppProvider";
 import { PmPicker, StatusChip } from "./ui";
+import { DeptPicker } from "./DeptPicker";
 
 const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -18,6 +19,7 @@ type Form = Pick<
   Stage,
   | "name"
   | "department"
+  | "related_departments"
   | "description"
   | "plan_start"
   | "plan_end"
@@ -37,6 +39,7 @@ function pick(s: Stage): Form {
   return {
     name: s.name,
     department: s.department,
+    related_departments: s.related_departments ?? [],
     description: s.description,
     plan_start: s.plan_start,
     plan_end: s.plan_end,
@@ -63,6 +66,7 @@ export function StagePanel({
   logs,
   myId,
   profileById,
+  departments,
   onSave,
   onDelete,
   onMove,
@@ -79,6 +83,7 @@ export function StagePanel({
   logs: StageLog[];
   myId: string;
   profileById: Record<string, Profile>;
+  departments: string[];
   onSave: (patch: Partial<Stage>) => Promise<void>;
   onDelete: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -94,7 +99,9 @@ export function StagePanel({
   useEffect(() => setF(pick(stage)), [stage]);
 
   const base = pick(stage);
-  const dirty = (Object.keys(f) as (keyof Form)[]).some((k) => (f[k] ?? null) !== (base[k] ?? null));
+  const dirty = (Object.keys(f) as (keyof Form)[]).some(
+    (k) => JSON.stringify(f[k] ?? null) !== JSON.stringify(base[k] ?? null)
+  );
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
   const nul = (v: string) => (v.trim() === "" ? null : v);
 
@@ -158,12 +165,35 @@ export function StagePanel({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="label">담당부서</label>
-              <input className="input" disabled={ro} value={f.department ?? ""} onChange={(e) => set("department", nul(e.target.value))} />
+              <input
+                className="input"
+                list="dept-options"
+                disabled={ro}
+                value={f.department ?? ""}
+                onChange={(e) => set("department", nul(e.target.value))}
+              />
+              <datalist id="dept-options">
+                {departments.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
             </div>
             <div>
               <label className="label">담당 / 협의 대상</label>
               <input className="input" disabled={ro} value={f.assignee ?? ""} onChange={(e) => set("assignee", nul(e.target.value))} />
             </div>
+          </div>
+          <div data-tour="sp-related">
+            <label className="label">
+              연관부서 <span className="font-normal text-slate-400">— 함께 검토·협업하는 부서. 그 부서의 일정에도 이 단계가 함께 표시됩니다</span>
+            </label>
+            <DeptPicker
+              value={f.related_departments}
+              onChange={(v) => set("related_departments", v)}
+              options={departments}
+              exclude={f.department}
+              disabled={ro}
+            />
           </div>
           <div>
             <label className="label">주요내용 (단계 설명)</label>

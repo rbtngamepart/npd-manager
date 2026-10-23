@@ -126,6 +126,7 @@ create table if not exists public.stages (
   sort_order   int  not null default 0,
   name         text not null,
   department   text,
+  related_departments text[] not null default '{}',  -- 연관부서 (함께 검토·협업)
   description  text,
   plan_start   date,
   plan_end     date,
@@ -143,6 +144,9 @@ create table if not exists public.stages (
   updated_by   uuid references public.profiles(id) on delete set null default auth.uid()
 );
 create index if not exists stages_project_idx on public.stages(project_id, sort_order);
+-- (이미 만든 DB에 연관부서 칸 추가)
+alter table public.stages add column if not exists related_departments text[] not null default '{}';
+create index if not exists stages_related_idx on public.stages using gin(related_departments);
 
 -- ---------------------------------------------------------------------
 -- 4. 진행 기록 (누적 메모)  — 단계가 삭제돼도 기록은 남김
@@ -185,6 +189,13 @@ begin
   if new.pm_status is distinct from old.pm_status then
     msgs := msgs || format('PM 판단 %s → %s',
       coalesce(old.pm_status, '없음'), coalesce(new.pm_status, '없음'));
+  end if;
+  if new.department is distinct from old.department then
+    msgs := msgs || format('담당부서 %s → %s', coalesce(old.department, '-'), coalesce(new.department, '-'));
+  end if;
+  if new.related_departments is distinct from old.related_departments then
+    msgs := msgs || format('연관부서 %s',
+      coalesce(nullif(array_to_string(new.related_departments, ', '), ''), '없음'));
   end if;
   if array_length(msgs, 1) > 0 then
     insert into public.stage_logs (project_id, stage_id, stage_name, kind, body, author_id)

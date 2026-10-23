@@ -55,6 +55,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   const nav = [
     { href: "/", label: "대시보드" },
+    { href: "/departments", label: "부서별 일정" },
     { href: "/templates", label: "템플릿" },
     ...(me.is_admin ? [{ href: "/admin", label: "사용자 관리" }] : []),
   ];

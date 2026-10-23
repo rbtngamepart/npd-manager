@@ -15,6 +15,7 @@ import { diffDays, full, relativeTime, short, today as todayFn, weekNumber } fro
 import { stageAutoStatus, stageFinalStatus, summarize } from "@/lib/status";
 import { toTemplate } from "@/lib/templates";
 import { useTourEvents } from "@/components/Tour";
+import { collectDepartments, deptRole } from "@/lib/departments";
 import type { Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -30,6 +31,8 @@ function ProjectPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [logs, setLogs] = useState<StageLog[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [deptRows, setDeptRows] = useState<Pick<Stage, "department" | "related_departments">[]>([]);
+  const [deptFilter, setDeptFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("gantt");
   const [scale, setScale] = useState<"week" | "month">("week");
@@ -47,17 +50,19 @@ function ProjectPage() {
 
   const load = useCallback(async () => {
     const sb = supabase();
-    const [p, s, l, m] = await Promise.all([
+    const [p, s, l, m, d] = await Promise.all([
       sb.from("projects").select("*").eq("id", id).maybeSingle(),
       sb.from("stages").select("*").eq("project_id", id).order("sort_order").order("plan_start"),
       sb.from("stage_logs").select("*").eq("project_id", id).order("created_at", { ascending: false }).limit(500),
       sb.from("project_members").select("*").eq("project_id", id),
+      sb.from("stages").select("department,related_departments"),
     ]);
     setProject(p.data as Project | null);
     setMemo((p.data as Project | null)?.pm_memo ?? "");
     setStages((s.data ?? []) as Stage[]);
     setLogs((l.data ?? []) as StageLog[]);
     setMembers((m.data ?? []) as ProjectMember[]);
+    setDeptRows((d.data ?? []) as Pick<Stage, "department" | "related_departments">[]);
     setLoading(false);
   }, [id]);
 
@@ -181,7 +186,7 @@ function ProjectPage() {
   function exportCSV() {
     if (!project) return;
     const head = [
-      "단계", "담당부서", "주요내용", "계획 시작주차", "계획 기간(주)", "계획 시작일", "계획 종료일",
+      "단계", "담당부서", "연관부서", "주요내용", "계획 시작주차", "계획 기간(주)", "계획 시작일", "계획 종료일",
       "실제 시작일", "예상 완료일", "실제 완료일", "진행률", "자동 상태", "PM 판단", "최종 상태",
       "이슈/결정 필요사항", "다음 액션", "담당/협의 대상", "확인 필요", "미사용",
     ];
@@ -191,7 +196,7 @@ function ProjectPage() {
       const sw = project.start_date && s.plan_start ? weekNumber(project.start_date, s.plan_start) : "";
       const wk = s.plan_start && s.plan_end ? Math.ceil((diffDays(s.plan_start, s.plan_end) + 1) / 7) : "";
       return [
-        s.name, s.department, s.description, sw, wk, s.plan_start, s.plan_end, s.actual_start, s.expected_end,
+        s.name, s.department, (s.related_departments ?? []).join(", "), s.description, sw, wk, s.plan_start, s.plan_end, s.actual_start, s.expected_end,
         s.actual_end, `${s.progress}%`, label(stageAutoStatus(s, today)), label(s.pm_status),
         label(stageFinalStatus(s, today)), s.issue, s.next_action, s.assignee, s.needs_check ? "TRUE" : "FALSE",
         s.skipped ? "TRUE" : "",
@@ -221,6 +226,9 @@ function ProjectPage() {
     );
 
   const sel = stages.find((s) => s.id === selected) ?? null;
+  const departments = collectDepartments(deptRows.concat(stages), profiles.map((p) => p.department));
+  const projectDepts = collectDepartments(stages).filter((d) => stages.some((s) => deptRole(s, d)));
+  const shown = deptFilter ? stages.filter((s) => deptRole(s, deptFilter)) : stages;
   const delay = sum.planEnd && sum.forecastEnd ? diffDays(sum.planEnd, sum.forecastEnd) : 0;
   const pm = project.pm_id ? profileById[project.pm_id] : null;
 
@@ -315,6 +323,21 @@ function ProjectPage() {
             ))}
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            {(tab === "gantt" || tab === "pm") && projectDepts.length > 1 && (
+              <select
+                data-tour="dept-filter"
+                className={`mr-1 rounded-lg border px-2 py-1 text-xs ${deptFilter ? "border-violet-300 bg-violet-50 text-violet-800" : "border-black/10 bg-white text-slate-600"}`}
+                value={deptFilter}
+                onChange={(e) => setDeptFilter(e.target.value)}
+              >
+                <option value="">부서: 전체</option>
+                {projectDepts.map((d) => (
+                  <option key={d} value={d}>
+                    {d} (담당+협업)
+                  </option>
+                ))}
+              </select>
+            )}
             {tab === "gantt" && (
               <div className="mr-2 inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="gantt-scale">
                 {(["week", "month"] as const).map((s) => (
@@ -372,7 +395,8 @@ function ProjectPage() {
           ) : (
             <div data-tour="gantt">
               <Gantt
-                stages={stages}
+                stages={shown}
+                dept={deptFilter || null}
                 projectStart={project.start_date}
                 scale={scale}
                 canEdit={canEdit}
@@ -405,7 +429,8 @@ function ProjectPage() {
 
         {tab === "pm" && (
           <ProgressTable
-            stages={stages}
+            stages={shown}
+            dept={deptFilter || null}
             logs={logs}
             today={today}
             canEdit={canEdit}
@@ -469,6 +494,7 @@ function ProjectPage() {
           logs={logs.filter((l) => l.stage_id === sel.id)}
           myId={me.id}
           profileById={profileById}
+          departments={departments}
           onSave={async (patch) => {
             await updateStage(sel.id, patch);
             toast("저장했습니다");

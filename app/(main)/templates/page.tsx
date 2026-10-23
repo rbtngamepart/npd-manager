@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
 import { Empty, Modal, Toast } from "@/components/ui";
 import type { Template, TemplateStage } from "@/lib/types";
+import { splitDepartments } from "@/lib/departments";
 
 export default function TemplatesPage() {
   const { me } = useApp();
@@ -79,7 +80,10 @@ export default function TemplatesPage() {
                 {t.stages.map((s, i) => (
                   <li key={i} className="flex gap-2">
                     <span className="w-4 text-right text-xs tabular-nums text-slate-400">{i + 1}</span>
-                    <span className="flex-1 truncate">{s.name}</span>
+                    <span className="flex-1 truncate">
+                      {s.name}
+                      {s.related_departments?.length ? <span className="text-xs text-violet-600"> +{s.related_departments.join(", ")}</span> : null}
+                    </span>
                     <span className="text-xs tabular-nums text-slate-400">
                       {s.start_week ? `${s.start_week}주~` : ""}
                       {s.weeks ? `${s.weeks}주` : ""}
@@ -111,6 +115,7 @@ export default function TemplatesPage() {
                 <tr>
                   <th className="th">단계명</th>
                   <th className="th w-28">담당부서</th>
+                  <th className="th w-36">연관부서 (쉼표)</th>
                   <th className="th">주요내용</th>
                   <th className="th w-20">시작주차</th>
                   <th className="th w-20">기간(주)</th>
@@ -125,6 +130,14 @@ export default function TemplatesPage() {
                     </td>
                     <td className="p-1.5">
                       <input className="input" value={r.department ?? ""} onChange={(e) => setRow(i, { department: e.target.value || null })} />
+                    </td>
+                    <td className="p-1.5">
+                      <input
+                        className="input"
+                        defaultValue={(r.related_departments ?? []).join(", ")}
+                        placeholder="예) 구매물류팀"
+                        onBlur={(e) => setRow(i, { related_departments: splitDepartments(e.target.value) })}
+                      />
                     </td>
                     <td className="p-1.5">
                       <input className="input" value={r.description ?? ""} onChange={(e) => setRow(i, { description: e.target.value || null })} />

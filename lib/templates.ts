@@ -19,6 +19,7 @@ export function instantiate(tpl: TemplateStage[], projectId: string, projectStar
       sort_order: i,
       name: t.name,
       department: t.department ?? null,
+      related_departments: t.related_departments ?? [],
       description: t.description ?? null,
       plan_start,
       plan_end,
@@ -40,6 +41,7 @@ export function toTemplate(stages: Stage[], projectStart: string | null): Templa
     return {
       name: s.name,
       department: s.department,
+      related_departments: s.related_departments?.length ? s.related_departments : undefined,
       description: s.description,
       start_week,
       weeks,
