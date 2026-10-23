@@ -94,3 +94,16 @@ export interface Department {
   sort_order: number;
   created_at: string;
 }
+
+export interface Invite {
+  email: string;
+  name: string | null;
+  department: string | null;
+  is_game_part: boolean;
+  is_admin: boolean;
+  project_ids: string[];
+  invited_by: string | null;
+  created_at: string;
+  used_at: string | null;
+  user_id: string | null;
+}

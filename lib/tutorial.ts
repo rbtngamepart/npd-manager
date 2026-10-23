@@ -452,6 +452,13 @@ export const CHAPTERS: Chapter[] = [
       },
       {
         route: "/admin",
+        target: "admin-tabs",
+        role: "admin",
+        title: "메일 미리 초대 (관리자)",
+        body: "[초대] 탭에 팀원 메일을 미리 등록하면, 그 사람은 처음 로그인할 때 승인 대기 없이 바로 들어옵니다.\n\n· 여러 메일을 한 번에 붙여넣기\n· 부서·권한(보기/게임파트/관리자)·편집할 프로젝트를 미리 지정\n· [안내 복사]로 접속 주소와 로그인 방법을 메신저에 붙여넣기\n· 이미 로그인해서 대기 중인 사람도 등록하는 즉시 승인됩니다",
+      },
+      {
+        route: "/admin",
         ready: "admin-tabs",
         target: "admin-tabs",
         role: "admin",

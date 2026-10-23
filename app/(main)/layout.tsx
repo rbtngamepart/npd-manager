@@ -44,6 +44,8 @@ function Shell({ children }: { children: React.ReactNode }) {
             <b>{me.email}</b> 계정이 등록되었습니다.
             <br />
             게임파트 관리자에게 승인을 요청해 주세요.
+            <br />
+            <span className="text-xs text-slate-400">(관리자가 이 메일을 초대 목록에 등록하면 새로고침 시 바로 들어와집니다)</span>
           </p>
           <button className="btn-ghost" onClick={logout}>
             로그아웃

@@ -5,6 +5,7 @@ import { Suspense, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
 import { DepartmentManager } from "@/components/DepartmentManager";
+import { InviteManager } from "@/components/InviteManager";
 import { DeptSelect } from "@/components/DeptPicker";
 import { Toast } from "@/components/ui";
 import type { Profile } from "@/lib/types";
@@ -13,7 +14,8 @@ function AdminPage() {
   const { me, profiles, reloadProfiles, deptNames } = useApp();
   const params = useSearchParams();
   const router = useRouter();
-  const tab = params.get("tab") === "departments" ? "departments" : "users";
+  const tabParam = params.get("tab");
+  const tab = tabParam === "departments" || tabParam === "invites" ? tabParam : "users";
   const [toast, setToast] = useState<string | null>(null);
 
   if (!me?.is_admin) return <p className="text-sm text-slate-500">관리자만 볼 수 있습니다.</p>;
@@ -45,12 +47,13 @@ function AdminPage() {
           {(
             [
               ["users", `사용자 ${pending.length ? `· 대기 ${pending.length}` : ""}`],
+              ["invites", "초대"],
               ["departments", "부서"],
             ] as const
           ).map(([k, l]) => (
             <button
               key={k}
-              onClick={() => router.replace(k === "users" ? "/admin" : "/admin?tab=departments")}
+              onClick={() => router.replace(k === "users" ? "/admin" : `/admin?tab=${k}`)}
               className={`rounded-md px-3 py-1.5 ${tab === k ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}
             >
               {l}
@@ -61,11 +64,18 @@ function AdminPage() {
 
       {tab === "departments" ? (
         <DepartmentManager toast={show} />
+      ) : tab === "invites" ? (
+        <InviteManager toast={show} />
       ) : (
         <>
           <p className="text-sm text-slate-500">
             처음 로그인한 사람은 <b>승인 대기</b> 상태입니다. 승인하면 모든 프로젝트를 볼 수 있고, <b>게임파트</b>로 지정하면 모든 프로젝트를 편집할 수 있습니다.
             타부서는 프로젝트의 [설정·권한] 탭에서 프로젝트별 편집자로 추가하세요.
+            <br />
+            미리 메일을 등록해 두면 승인 없이 바로 접속하게 할 수 있어요 →{" "}
+            <button className="font-medium text-brand-600 underline-offset-2 hover:underline" onClick={() => router.replace("/admin?tab=invites")}>
+              초대 탭
+            </button>
           </p>
           {pending.length > 0 && (
             <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">

@@ -14,10 +14,17 @@ export function ProjectFilter({
   options,
   value,
   onChange,
+  emptyLabel = "전체",
+  title = "프로젝트",
+  showCount = true,
 }: {
   options: ProjectOption[];
   value: string[];
   onChange: (ids: string[]) => void;
+  /** 아무것도 안 골랐을 때 보이는 글자 */
+  emptyLabel?: string;
+  title?: string;
+  showCount?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -41,7 +48,7 @@ export function ProjectFilter({
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   const label =
     value.length === 0
-      ? "전체"
+      ? emptyLabel
       : value.length === 1
         ? options.find((o) => o.id === value[0])?.name ?? "1개 선택"
         : `${value.length}개 선택`;
@@ -49,12 +56,13 @@ export function ProjectFilter({
   return (
     <div className="relative" ref={box}>
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
         className={`flex max-w-[260px] items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${
           value.length ? "border-brand-500/40 bg-brand-50 text-brand-700" : "border-black/10 bg-white text-slate-700"
         }`}
       >
-        <span className="text-slate-400">프로젝트</span>
+        <span className="text-slate-400">{title}</span>
         <span className="truncate font-medium">{label}</span>
         <span className="text-slate-400">▾</span>
       </button>
@@ -71,7 +79,7 @@ export function ProjectFilter({
                 모두 선택
               </button>
               <button className="hover:text-ink" onClick={() => onChange([])}>
-                선택 해제 (전체 보기)
+                선택 해제{emptyLabel === "전체" ? " (전체 보기)" : ""}
               </button>
             </div>
           </div>
@@ -85,7 +93,9 @@ export function ProjectFilter({
                     <span className="block truncate">{o.name}</span>
                     {o.category && <span className="block truncate text-[11px] text-slate-400">{o.category}</span>}
                   </span>
-                  <span className={`shrink-0 text-xs tabular-nums ${o.count ? "text-slate-500" : "text-slate-300"}`}>{o.count}단계</span>
+                  {showCount && (
+                    <span className={`shrink-0 text-xs tabular-nums ${o.count ? "text-slate-500" : "text-slate-300"}`}>{o.count}단계</span>
+                  )}
                 </label>
               </li>
             ))}

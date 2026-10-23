@@ -93,7 +93,9 @@ export default function LoginPage() {
           )}
         </div>
         <p className="mt-4 text-center text-xs text-slate-400">
-          처음 로그인하면 관리자 승인 후 사용할 수 있습니다.
+          초대받은 메일로 로그인하면 바로 사용할 수 있습니다.
+          <br />
+          초대받지 않았다면 첫 로그인 후 관리자 승인을 기다려 주세요.
         </p>
       </div>
     </main>
