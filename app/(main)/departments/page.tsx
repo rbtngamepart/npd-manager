@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
 import { Gantt } from "@/components/Gantt";
 import { DeptBadges } from "@/components/DeptPicker";
+import { ProjectFilter, type ProjectOption } from "@/components/ProjectFilter";
 import { Empty, ProgressBar, StatusChip } from "@/components/ui";
 import { collectDepartments, deptRole } from "@/lib/departments";
 import { short, today as todayFn } from "@/lib/dates";
@@ -14,6 +15,7 @@ import { stageFinalStatus } from "@/lib/status";
 import type { Project, Stage } from "@/lib/types";
 
 const PREF_KEY = "npd-dept";
+const PROJ_KEY = "npd-dept-projects";
 
 function DepartmentsPage() {
   const { me, profiles, deptNames } = useApp();
@@ -27,6 +29,8 @@ function DepartmentsPage() {
   const [scale, setScale] = useState<"week" | "month">("month");
   const [hideDone, setHideDone] = useState(true);
   const [dept, setDept] = useState<string>("");
+  const [picked, setPicked] = useState<string[] | null>(null); // 빈 배열 = 전체
+  const [order, setOrder] = useState<"project" | "date">("project");
 
   useEffect(() => {
     (async () => {
@@ -59,6 +63,27 @@ function DepartmentsPage() {
     setDept(pick ?? departments[0]);
   }, [departments, dept, params, me]);
 
+  // 처음 프로젝트 선택: 주소(?p=) → 지난번 선택
+  useEffect(() => {
+    if (picked !== null || loading) return;
+    let raw = params.get("p");
+    if (raw === null) {
+      try {
+        raw = localStorage.getItem(PROJ_KEY);
+      } catch {
+        /* 무시 */
+      }
+    }
+    const ids = (raw ?? "").split(",").filter((id) => projects.some((p) => p.id === id));
+    setPicked(ids);
+  }, [loading, picked, params, projects]);
+
+  function syncUrl(d: string, ids: string[]) {
+    const q = new URLSearchParams({ d });
+    if (ids.length) q.set("p", ids.join(","));
+    router.replace(`/departments?${q.toString()}`);
+  }
+
   function choose(d: string) {
     setDept(d);
     try {
@@ -66,23 +91,52 @@ function DepartmentsPage() {
     } catch {
       /* 무시 */
     }
-    router.replace(`/departments?d=${encodeURIComponent(d)}`);
+    syncUrl(d, picked ?? []);
+  }
+
+  function pickProjects(ids: string[]) {
+    setPicked(ids);
+    try {
+      localStorage.setItem(PROJ_KEY, ids.join(","));
+    } catch {
+      /* 무시 */
+    }
+    syncUrl(dept, ids);
   }
 
   const projectById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
+  const sel = picked ?? [];
+  const inSel = (pid: string) => sel.length === 0 || sel.includes(pid);
   const rows = stages
-    .filter((s) => projectById[s.project_id] && !s.skipped && deptRole(s, dept))
+    .filter((s) => projectById[s.project_id] && inSel(s.project_id) && !s.skipped && deptRole(s, dept))
     .filter((s) => !hideDone || !s.actual_end);
   const counts = (d: string) =>
-    stages.filter((s) => projectById[s.project_id] && !s.skipped && !s.actual_end && deptRole(s, d)).length;
+    stages.filter((s) => projectById[s.project_id] && inSel(s.project_id) && !s.skipped && !s.actual_end && deptRole(s, d)).length;
+
+  // 프로젝트 선택 목록: 이 부서 단계가 있는 프로젝트를 위로
+  const projectOptions: ProjectOption[] = projects
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      count: stages.filter((s) => s.project_id === p.id && !s.skipped && (!hideDone || !s.actual_end) && deptRole(s, dept)).length,
+    }))
+    .sort((a, b) => Number(b.count > 0) - Number(a.count > 0) || a.name.localeCompare(b.name, "ko"));
+  const projectRank = Object.fromEntries(projectOptions.map((o, i) => [o.id, i]));
 
   const ownerN = rows.filter((s) => deptRole(s, dept) === "owner").length;
   const relatedN = rows.length - ownerN;
 
   // 간트에 프로젝트명이 보이도록 이름을 바꿔서 전달
+  const byDate = (a: Stage, b: Stage) => (a.plan_start ?? "9999").localeCompare(b.plan_start ?? "9999");
   const ganttRows = rows
     .slice()
-    .sort((a, b) => (a.plan_start ?? "9999").localeCompare(b.plan_start ?? "9999"));
+    .sort((a, b) =>
+      order === "project"
+        ? projectRank[a.project_id] - projectRank[b.project_id] || a.sort_order - b.sort_order || byDate(a, b)
+        : byDate(a, b)
+    );
+  const projectsInView = new Set(rows.map((s) => s.project_id)).size;
 
   return (
     <div className="space-y-5">
@@ -115,8 +169,23 @@ function DepartmentsPage() {
         <div className="flex flex-wrap items-center gap-3 border-b border-black/[0.06] px-4 py-2.5 text-xs">
           <span className="text-sm font-semibold">{dept}</span>
           <span className="text-slate-500">
-            담당 {ownerN} · <span className="text-violet-700">협업 {relatedN}</span>
+            프로젝트 {projectsInView} · 담당 {ownerN} · <span className="text-violet-700">협업 {relatedN}</span>
           </span>
+          <div data-tour="dept-projects">
+            <ProjectFilter options={projectOptions} value={sel} onChange={pickProjects} />
+          </div>
+          <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5">
+            {(
+              [
+                ["project", "프로젝트별"],
+                ["date", "날짜순"],
+              ] as const
+            ).map(([k, l]) => (
+              <button key={k} onClick={() => setOrder(k)} className={`rounded-md px-2.5 py-1 ${order === k ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}>
+                {l}
+              </button>
+            ))}
+          </div>
           <label className="flex items-center gap-1.5 text-slate-500">
             <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />
             완료 단계 숨기기
@@ -146,11 +215,30 @@ function DepartmentsPage() {
           </div>
         </div>
 
+        {sel.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-black/[0.06] bg-brand-50/30 px-4 py-2 text-xs">
+            <span className="text-slate-500">선택한 프로젝트</span>
+            {sel.map((id) => (
+              <span key={id} className="inline-flex items-center gap-1 rounded-md bg-white px-1.5 py-0.5 ring-1 ring-inset ring-black/10">
+                {projectById[id]?.name ?? "?"}
+                <button className="text-slate-400 hover:text-ink" onClick={() => pickProjects(sel.filter((x) => x !== id))} aria-label="선택 빼기">
+                  ✕
+                </button>
+              </span>
+            ))}
+            <button className="ml-1 text-slate-500 underline-offset-2 hover:underline" onClick={() => pickProjects([])}>
+              전체 보기
+            </button>
+          </div>
+        )}
         {loading ? (
           <p className="p-10 text-center text-sm text-slate-400">불러오는 중…</p>
         ) : rows.length === 0 ? (
           <div className="p-6">
-            <Empty>{dept} 부서가 담당하거나 협업하는 {hideDone ? "진행 중인 " : ""}단계가 없습니다.</Empty>
+            <Empty>
+              {sel.length ? "선택한 프로젝트에서 " : ""}
+              {dept} 부서가 담당하거나 협업하는 {hideDone ? "진행 중인 " : ""}단계가 없습니다.
+            </Empty>
           </div>
         ) : view === "gantt" ? (
           <Gantt
