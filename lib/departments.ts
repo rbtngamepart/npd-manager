@@ -39,3 +39,21 @@ export function splitDepartments(raw: string | null | undefined): string[] {
     )
   );
 }
+
+/** 문자열 하나 또는 여러 개를 배열로 */
+export function toList(v: string | string[] | null | undefined): string[] {
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+/** 고른 부서 중 하나라도 담당/협업이면 true (아무것도 안 골랐으면 true) */
+export function matchesDepts(s: Pick<Stage, "department" | "related_departments">, depts: string[]): boolean {
+  return depts.length === 0 || depts.some((d) => deptRole(s, d));
+}
+
+/** 고른 부서 기준 역할: 하나라도 담당이면 담당, 아니면 협업 */
+export function rolesFor(s: Pick<Stage, "department" | "related_departments">, depts: string[]): DeptRole {
+  if (depts.some((d) => deptRole(s, d) === "owner")) return "owner";
+  if (depts.some((d) => deptRole(s, d) === "related")) return "related";
+  return null;
+}

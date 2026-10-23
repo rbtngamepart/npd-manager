@@ -15,7 +15,8 @@ import { diffDays, full, relativeTime, short, today as todayFn, weekNumber } fro
 import { stageAutoStatus, stageFinalStatus, summarize } from "@/lib/status";
 import { toTemplate } from "@/lib/templates";
 import { useTourEvents } from "@/components/Tour";
-import { collectDepartments, deptRole } from "@/lib/departments";
+import { collectDepartments, deptRole, matchesDepts } from "@/lib/departments";
+import { ProjectFilter } from "@/components/ProjectFilter";
 import { makeDeptColor } from "@/lib/deptColors";
 import type { Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
 
@@ -32,7 +33,8 @@ function ProjectPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [logs, setLogs] = useState<StageLog[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [deptFilter, setDeptFilter] = useState("");
+  const [deptFilter, setDeptFilter] = useState<string[]>([]);
+  const toggleDept = (d: string) => setDeptFilter((f) => (f.includes(d) ? f.filter((x) => x !== d) : [...f, d]));
   const [colorBy, setColorByState] = useState<"dept" | "status">("dept");
   const [groupDept, setGroupDeptState] = useState(false);
   useEffect(() => {
@@ -254,7 +256,7 @@ function ProjectPage() {
   const departments = deptNames;
   const projectDepts = collectDepartments(stages, [], deptNames).filter((d) => stages.some((s) => deptRole(s, d)));
   const colorOf = makeDeptColor(deptNames);
-  const filtered = deptFilter ? stages.filter((s) => deptRole(s, deptFilter)) : stages;
+  const filtered = stages.filter((s) => matchesDepts(s, deptFilter));
   const deptOrder = (d: string | null) => (d ? (projectDepts.indexOf(d) + 1 || 999) : 1000);
   const shown = groupDept
     ? filtered.slice().sort((a, b) => deptOrder(a.department) - deptOrder(b.department) || a.sort_order - b.sort_order)
@@ -354,19 +356,23 @@ function ProjectPage() {
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {(tab === "gantt" || tab === "pm") && projectDepts.length > 1 && (
-              <select
-                data-tour="dept-filter"
-                className={`mr-1 rounded-lg border px-2 py-1 text-xs ${deptFilter ? "border-violet-300 bg-violet-50 text-violet-800" : "border-black/10 bg-white text-slate-600"}`}
-                value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)}
-              >
-                <option value="">부서: 전체</option>
-                {projectDepts.map((d) => (
-                  <option key={d} value={d}>
-                    {d} (담당+협업)
-                  </option>
-                ))}
-              </select>
+              <div data-tour="dept-filter" className="mr-1">
+                <ProjectFilter
+                  title="부서"
+                  placeholder="부서 검색"
+                  unit="단계"
+                  align="right"
+                  options={projectDepts.map((d) => ({
+                    id: d,
+                    name: d,
+                    category: null,
+                    dot: colorOf(d).solid,
+                    count: stages.filter((s) => deptRole(s, d)).length,
+                  }))}
+                  value={deptFilter}
+                  onChange={setDeptFilter}
+                />
+              </div>
             )}
             {tab === "gantt" && (
               <>
@@ -450,7 +456,7 @@ function ProjectPage() {
             <div data-tour="gantt">
               <Gantt
                 stages={shown}
-                dept={deptFilter || null}
+                dept={deptFilter}
                 colorOf={colorOf}
                 colorBy={colorBy}
                 groupByDept={groupDept}
@@ -467,14 +473,14 @@ function ProjectPage() {
                   <span className="mr-1 text-[11px] text-slate-500">부서</span>
                   {projectDepts.map((d) => {
                     const c = colorOf(d);
-                    const on = deptFilter === d;
+                    const on = deptFilter.includes(d);
                     const n = stages.filter((s) => s.department === d).length;
                     const r = stages.filter((s) => (s.related_departments ?? []).includes(d)).length;
                     return (
                       <button
                         key={d}
-                        onClick={() => setDeptFilter(on ? "" : d)}
-                        title={on ? "필터 해제" : `${d}이(가) 담당·협업하는 단계만 보기`}
+                        onClick={() => toggleDept(d)}
+                        title={on ? "선택 해제" : `${d} 추가 (여러 부서 함께 선택 가능)`}
                         className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 transition"
                         style={{
                           background: on ? c.solid : c.light,
@@ -491,12 +497,12 @@ function ProjectPage() {
                       </button>
                     );
                   })}
-                  {deptFilter && (
-                    <button className="ml-1 text-[11px] text-slate-500 underline-offset-2 hover:underline" onClick={() => setDeptFilter("")}>
+                  {deptFilter.length > 0 && (
+                    <button className="ml-1 text-[11px] text-slate-500 underline-offset-2 hover:underline" onClick={() => setDeptFilter([])}>
                       전체 보기
                     </button>
                   )}
-                  <span className="ml-auto text-[11px] text-slate-400">숫자: 담당 단계 + 협업 단계 · 누르면 그 부서만</span>
+                  <span className="ml-auto text-[11px] text-slate-400">숫자: 담당 + 협업 단계 · 눌러서 여러 부서 함께 선택</span>
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-4 border-t border-black/[0.06] px-4 py-2 text-[11px] text-slate-500">
@@ -524,7 +530,7 @@ function ProjectPage() {
         {tab === "pm" && (
           <ProgressTable
             stages={shown}
-            dept={deptFilter || null}
+            dept={deptFilter}
             logs={logs}
             colorOf={colorOf}
             today={today}

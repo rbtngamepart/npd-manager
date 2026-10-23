@@ -7,6 +7,8 @@ export interface ProjectOption {
   name: string;
   category: string | null;
   count: number;
+  /** 이름 앞 색 점 */
+  dot?: string;
 }
 
 /** 프로젝트 여러 개 고르기. 아무것도 안 고르면 '전체' */
@@ -17,6 +19,9 @@ export function ProjectFilter({
   emptyLabel = "전체",
   title = "프로젝트",
   showCount = true,
+  placeholder = "프로젝트 검색",
+  unit = "단계",
+  align = "left",
 }: {
   options: ProjectOption[];
   value: string[];
@@ -25,6 +30,9 @@ export function ProjectFilter({
   emptyLabel?: string;
   title?: string;
   showCount?: boolean;
+  placeholder?: string;
+  unit?: string;
+  align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -68,9 +76,9 @@ export function ProjectFilter({
       </button>
 
       {open && (
-        <div className="absolute left-0 z-30 mt-1 w-80 rounded-xl border border-black/10 bg-white shadow-xl">
+        <div className={`absolute ${align === "right" ? "right-0" : "left-0"} z-30 mt-1 w-80 rounded-xl border border-black/10 bg-white shadow-xl`}>
           <div className="border-b border-black/[0.06] p-2">
-            <input autoFocus className="input py-1 text-xs" placeholder="프로젝트 검색" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input autoFocus className="input py-1 text-xs" placeholder={placeholder} value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div className="flex items-center justify-between px-3 py-1.5 text-[11px] text-slate-500">
             <span>여러 개 선택할 수 있어요</span>
@@ -84,17 +92,20 @@ export function ProjectFilter({
             </div>
           </div>
           <ul className="scroll-thin max-h-72 overflow-y-auto pb-1">
-            {shown.length === 0 && <li className="px-3 py-4 text-center text-xs text-slate-400">해당하는 프로젝트가 없습니다</li>}
+            {shown.length === 0 && <li className="px-3 py-4 text-center text-xs text-slate-400">검색 결과가 없습니다</li>}
             {shown.map((o) => (
               <li key={o.id}>
                 <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-slate-50">
                   <input type="checkbox" checked={value.includes(o.id)} onChange={() => toggle(o.id)} />
+                  {o.dot && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: o.dot }} />}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{o.name}</span>
                     {o.category && <span className="block truncate text-[11px] text-slate-400">{o.category}</span>}
                   </span>
                   {showCount && (
-                    <span className={`shrink-0 text-xs tabular-nums ${o.count ? "text-slate-500" : "text-slate-300"}`}>{o.count}단계</span>
+                    <span className={`shrink-0 text-xs tabular-nums ${o.count ? "text-slate-500" : "text-slate-300"}`}>{o.count}
+                      {unit}
+                    </span>
                   )}
                 </label>
               </li>

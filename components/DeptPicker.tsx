@@ -1,6 +1,7 @@
 "use client";
 
 import type { DeptColorFn } from "@/lib/deptColors";
+import { toList } from "@/lib/departments";
 
 /** 연관부서 여러 개 고르기: 관리자가 정한 부서 목록에서 선택 */
 export function DeptPicker({
@@ -99,28 +100,30 @@ export function DeptBadges({
 }: {
   owner: string | null;
   related: string[];
-  highlight?: string | null;
+  highlight?: string | string[] | null;
   colorOf?: DeptColorFn;
 }) {
+  const hl = toList(highlight);
+  const isHl = (d: string | null) => !!d && hl.includes(d);
   const oc = colorOf && owner ? colorOf(owner) : null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       {oc ? (
         <span
-          className={`rounded px-1.5 py-px text-[11px] font-medium ${highlight === owner ? "ring-2 ring-offset-1" : ""}`}
+          className={`rounded px-1.5 py-px text-[11px] font-medium ${isHl(owner) ? "ring-2 ring-offset-1" : ""}`}
           style={{ background: oc.light, color: oc.text, ["--tw-ring-color" as string]: oc.solid }}
         >
           {owner}
         </span>
       ) : (
-        <span className={highlight && highlight === owner ? "font-semibold text-ink" : ""}>{owner ?? "—"}</span>
+        <span className={isHl(owner) ? "font-semibold text-ink" : ""}>{owner ?? "—"}</span>
       )}
       {(related ?? []).map((d) => {
         const c = colorOf ? colorOf(d) : null;
         return c ? (
           <span
             key={d}
-            className={`inline-flex items-center gap-1 rounded px-1 text-[11px] ${highlight === d ? "font-semibold" : ""}`}
+            className={`inline-flex items-center gap-1 rounded px-1 text-[11px] ${isHl(d) ? "font-semibold" : ""}`}
             style={{ color: c.text, boxShadow: `inset 0 0 0 1px ${c.solid}55` }}
           >
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: c.solid }} />+{d}
@@ -129,7 +132,7 @@ export function DeptBadges({
           <span
             key={d}
             className={`rounded px-1 text-[11px] ring-1 ring-inset ${
-              highlight === d ? "bg-violet-100 text-violet-800 ring-violet-300" : "bg-violet-50 text-violet-600 ring-violet-200"
+              isHl(d) ? "bg-violet-100 text-violet-800 ring-violet-300" : "bg-violet-50 text-violet-600 ring-violet-200"
             }`}
           >
             +{d}

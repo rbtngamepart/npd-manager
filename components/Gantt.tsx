@@ -5,7 +5,7 @@ import { addDays, diffDays, maxDate, minDate, monthStart, nextMonth, short, week
 import { STATUS_META, stageFinalStatus } from "@/lib/status";
 import type { Stage } from "@/lib/types";
 import { StatusDot } from "./ui";
-import { deptRole } from "@/lib/departments";
+import { rolesFor, toList } from "@/lib/departments";
 import type { DeptColorFn } from "@/lib/deptColors";
 import { Fragment } from "react";
 
@@ -50,7 +50,7 @@ export function Gantt({
   onSelect: (id: string) => void;
   onDates: (id: string, start: string, end: string) => void;
   /** 이 부서 기준으로 담당/협업 표시 */
-  dept?: string | null;
+  dept?: string | string[] | null;
   /** 단계 이름 아래 작은 글씨를 바꾸고 싶을 때 */
   subtitle?: (s: Stage) => string;
   /** 부서 → 색 */
@@ -326,7 +326,7 @@ export function Gantt({
                     )}
                   </span>
                 </span>
-                {dept && deptRole(s, dept) === "related" && (
+                {toList(dept).length > 0 && rolesFor(s, toList(dept)) === "related" && (
                   <span className="shrink-0 rounded bg-violet-50 px-1 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200">협업</span>
                 )}
                 {s.needs_check && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" title="확인 필요" />}

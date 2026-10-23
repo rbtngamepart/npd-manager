@@ -24,7 +24,7 @@ export function ProgressTable({
   canEdit: boolean;
   onSelect: (id: string) => void;
   onQuick: (id: string, patch: Partial<Stage>) => void;
-  dept?: string | null;
+  dept?: string | string[] | null;
   colorOf?: DeptColorFn;
 }) {
   const [only, setOnly] = useState<"all" | "attention" | "check">("all");
