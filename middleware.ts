@@ -27,7 +27,7 @@ export async function middleware(request: NextRequest) {
   } = await sb.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isPublic = path.startsWith("/login") || path.startsWith("/auth");
+  const isPublic = ["/login", "/auth", "/privacy", "/terms"].some((p) => path.startsWith(p));
   if (!user && !isPublic) {
     const to = request.nextUrl.clone();
     to.pathname = "/login";

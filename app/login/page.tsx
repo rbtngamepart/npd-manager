@@ -97,6 +97,14 @@ export default function LoginPage() {
           <br />
           초대받지 않았다면 첫 로그인 후 관리자 승인을 기다려 주세요.
         </p>
+        <p className="mt-3 flex justify-center gap-3 text-[11px] text-slate-400">
+          <a href="/privacy" className="hover:text-ink">
+            개인정보처리방침
+          </a>
+          <a href="/terms" className="hover:text-ink">
+            이용약관
+          </a>
+        </p>
       </div>
     </main>
   );
