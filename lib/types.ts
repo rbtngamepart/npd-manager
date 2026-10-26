@@ -33,6 +33,8 @@ export interface Stage {
   name: string;
   department: string | null;
   related_departments: string[];
+  /** 부서별 역할 {"게임파트":"주관","운영팀":"의견 청취"} */
+  dept_roles: Record<string, string>;
   description: string | null;
   plan_start: string | null;
   plan_end: string | null;
@@ -67,6 +69,7 @@ export interface TemplateStage {
   name: string;
   department?: string | null;
   related_departments?: string[];
+  dept_roles?: Record<string, string>;
   description?: string | null;
   start_week?: number | null;
   weeks?: number | null;
@@ -106,4 +109,12 @@ export interface Invite {
   created_at: string;
   used_at: string | null;
   user_id: string | null;
+}
+
+export interface RoleType {
+  id: string;
+  name: string;
+  description: string | null;
+  sort_order: number;
+  created_at: string;
 }

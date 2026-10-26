@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { parseLooseDate, short, weeksToDates } from "@/lib/dates";
 import { emojiToLight } from "@/lib/status";
-import { splitDepartments } from "@/lib/departments";
+import { cleanRoles, parseDeptList, parseDeptRole } from "@/lib/departments";
 import type { Light, Stage } from "@/lib/types";
 import { Modal } from "./ui";
 
@@ -70,6 +70,7 @@ interface Row {
   name: string;
   department: string | null;
   related: string[] | null;
+  roles: Record<string, string>;
   description: string | null;
   plan_start: string | null;
   plan_end: string | null;
@@ -168,8 +169,14 @@ function parse(text: string, projectStart: string | null): { rows: Row[]; mapped
     rows.push({
       include: !/개괄/.test(name),
       name,
-      department: get("department"),
-      related: get("related") === null ? null : splitDepartments(get("related")),
+      ...(() => {
+        // "게임파트(주관)", "운영팀(검토), 법무팀(의결)" 처럼 괄호 안 역할도 읽음
+        const own = get("department") ? parseDeptRole(get("department")!) : null;
+        const rel = get("related") === null ? null : parseDeptList(get("related"));
+        const roles: Record<string, string> = { ...(rel?.roles ?? {}) };
+        if (own?.role) roles[own.dept] = own.role;
+        return { department: own?.dept ?? null, related: rel ? rel.depts.filter((d) => d !== own?.dept) : null, roles };
+      })(),
       description: get("description"),
       plan_start,
       plan_end,
@@ -269,6 +276,13 @@ export function ImportDialog({
         put("needs_check", r.needs_check);
 
         const match = mode === "merge" ? pool.find((s) => norm(s.name) === norm(r.name)) : undefined;
+        if (Object.keys(r.roles).length) {
+          patch.dept_roles = cleanRoles(
+            { ...(match?.dept_roles ?? {}), ...r.roles },
+            patch.department ?? match?.department ?? null,
+            patch.related_departments ?? match?.related_departments ?? []
+          );
+        }
         let stageId: string;
         if (match) {
           if (Object.keys(patch).length) {
@@ -369,7 +383,10 @@ export function ImportDialog({
                       <td className="px-3 py-1.5 font-medium">{r.name}</td>
                       <td className="px-3 py-1.5">
                         {r.department ?? ""}
-                        {r.related?.length ? <span className="text-violet-600"> +{r.related.join(", ")}</span> : null}
+                        {r.department && r.roles[r.department] ? <span className="text-slate-400">({r.roles[r.department]})</span> : null}
+                        {r.related?.length ? (
+                          <span className="text-violet-600"> +{r.related.map((d) => (r.roles[d] ? `${d}(${r.roles[d]})` : d)).join(", ")}</span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-1.5 tabular-nums">{r.plan_start ? `${short(r.plan_start)}~${short(r.plan_end)}` : "—"}</td>
                       <td className="px-3 py-1.5 tabular-nums">

@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
 import { DepartmentManager } from "@/components/DepartmentManager";
 import { InviteManager } from "@/components/InviteManager";
+import { RoleTypeManager } from "@/components/RoleTypeManager";
 import { DeptSelect } from "@/components/DeptPicker";
 import { Toast } from "@/components/ui";
 import type { Profile } from "@/lib/types";
@@ -48,7 +49,7 @@ function AdminPage() {
             [
               ["users", `사용자 ${pending.length ? `· 대기 ${pending.length}` : ""}`],
               ["invites", "초대"],
-              ["departments", "부서"],
+              ["departments", "부서 · 역할"],
             ] as const
           ).map(([k, l]) => (
             <button
@@ -63,7 +64,10 @@ function AdminPage() {
       </div>
 
       {tab === "departments" ? (
-        <DepartmentManager toast={show} />
+        <div className="space-y-6">
+          <DepartmentManager toast={show} />
+          <RoleTypeManager toast={show} />
+        </div>
       ) : tab === "invites" ? (
         <InviteManager toast={show} />
       ) : (

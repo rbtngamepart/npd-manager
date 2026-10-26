@@ -97,9 +97,12 @@ export function DeptBadges({
   related,
   highlight,
   colorOf,
+  roles,
 }: {
   owner: string | null;
   related: string[];
+  /** 부서별 역할 */
+  roles?: Record<string, string> | null;
   highlight?: string | string[] | null;
   colorOf?: DeptColorFn;
 }) {
@@ -114,6 +117,7 @@ export function DeptBadges({
           style={{ background: oc.light, color: oc.text, ["--tw-ring-color" as string]: oc.solid }}
         >
           {owner}
+          {roles?.[owner!] && <span className="ml-1 font-normal opacity-75">· {roles[owner!]}</span>}
         </span>
       ) : (
         <span className={isHl(owner) ? "font-semibold text-ink" : ""}>{owner ?? "—"}</span>
@@ -127,6 +131,7 @@ export function DeptBadges({
             style={{ color: c.text, boxShadow: `inset 0 0 0 1px ${c.solid}55` }}
           >
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: c.solid }} />+{d}
+            {roles?.[d] && <span className="font-medium">· {roles[d]}</span>}
           </span>
         ) : (
           <span
@@ -136,6 +141,7 @@ export function DeptBadges({
             }`}
           >
             +{d}
+            {roles?.[d] ? ` · ${roles[d]}` : ""}
           </span>
         );
       })}

@@ -5,7 +5,7 @@ import { addDays, diffDays, maxDate, minDate, monthStart, nextMonth, short, week
 import { STATUS_META, stageFinalStatus } from "@/lib/status";
 import type { Stage } from "@/lib/types";
 import { StatusDot } from "./ui";
-import { rolesFor, toList } from "@/lib/departments";
+import { roleLabel, rolesFor, toList } from "@/lib/departments";
 import type { DeptColorFn } from "@/lib/deptColors";
 import { Fragment } from "react";
 
@@ -304,19 +304,22 @@ export function Gantt({
                         {dc && s.department ? (
                           <span className="rounded px-1 py-px font-medium" style={{ background: dc.light, color: dc.text }}>
                             {s.department}
+                            {s.dept_roles?.[s.department] && <span className="font-normal opacity-75"> · {s.dept_roles[s.department]}</span>}
                           </span>
                         ) : (
                           s.department ?? ""
                         )}
                         {(s.related_departments ?? []).length > 0 && (
-                          <span className="ml-1 inline-flex items-center gap-0.5 text-slate-500" title={`연관부서: ${s.related_departments.join(", ")}`}>
+                          <span className="ml-1 inline-flex items-center gap-0.5 text-slate-500" title={`연관부서: ${s.related_departments.map((d) => (s.dept_roles?.[d] ? `${d}(${s.dept_roles[d]})` : d)).join(", ")}`}>
                             +
                             {colorOf
                               ? s.related_departments.map((d) => (
                                   <span key={d} className="inline-block h-2 w-2 rounded-full" style={{ background: colorOf(d).solid }} />
                                 ))
                               : null}
-                            {s.related_departments.length === 1 ? s.related_departments[0] : `${s.related_departments.length}개`}
+                            {s.related_departments.length === 1
+                              ? `${s.related_departments[0]}${s.dept_roles?.[s.related_departments[0]] ? `·${s.dept_roles[s.related_departments[0]]}` : ""}`
+                              : `${s.related_departments.length}개`}
                           </span>
                         )}
                         {s.plan_start && projectStart
@@ -326,9 +329,26 @@ export function Gantt({
                     )}
                   </span>
                 </span>
-                {toList(dept).length > 0 && rolesFor(s, toList(dept)) === "related" && (
-                  <span className="shrink-0 rounded bg-violet-50 px-1 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200">협업</span>
-                )}
+                {(() => {
+                  const ds = toList(dept);
+                  if (!ds.length) return null;
+                  const k = rolesFor(s, ds);
+                  if (!k) return null;
+                  // 고른 부서 중 이 단계에 관련된 첫 부서의 역할
+                  const d = ds.find((x) => s.department === x) ?? ds.find((x) => (s.related_departments ?? []).includes(x))!;
+                  const label = roleLabel(s, d);
+                  if (k === "owner" && label === "담당") return null;
+                  return (
+                    <span
+                      className={`shrink-0 rounded px-1 text-[10px] font-medium ring-1 ring-inset ${
+                        k === "related" ? "bg-violet-50 text-violet-700 ring-violet-200" : "bg-slate-50 text-slate-700 ring-slate-200"
+                      }`}
+                      title={ds.length > 1 ? `${d}의 역할` : undefined}
+                    >
+                      {label}
+                    </span>
+                  );
+                })()}
                 {s.needs_check && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" title="확인 필요" />}
               </button>
 

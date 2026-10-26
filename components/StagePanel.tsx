@@ -7,6 +7,9 @@ import type { LogKind, Profile, Stage, StageLog } from "@/lib/types";
 import { displayName } from "./AppProvider";
 import { PmPicker, StatusChip } from "./ui";
 import { DeptPicker, DeptSelect } from "./DeptPicker";
+import { useApp } from "./AppProvider";
+import { cleanRoles } from "@/lib/departments";
+import type { DeptColorFn } from "@/lib/deptColors";
 
 const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -20,6 +23,7 @@ type Form = Pick<
   | "name"
   | "department"
   | "related_departments"
+  | "dept_roles"
   | "description"
   | "plan_start"
   | "plan_end"
@@ -40,6 +44,7 @@ function pick(s: Stage): Form {
     name: s.name,
     department: s.department,
     related_departments: s.related_departments ?? [],
+    dept_roles: s.dept_roles ?? {},
     description: s.description,
     plan_start: s.plan_start,
     plan_end: s.plan_end,
@@ -67,6 +72,7 @@ export function StagePanel({
   myId,
   profileById,
   departments,
+  colorOf,
   onSave,
   onDelete,
   onMove,
@@ -84,6 +90,7 @@ export function StagePanel({
   myId: string;
   profileById: Record<string, Profile>;
   departments: string[];
+  colorOf?: DeptColorFn;
   onSave: (patch: Partial<Stage>) => Promise<void>;
   onDelete: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -95,6 +102,8 @@ export function StagePanel({
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
   const [kind, setKind] = useState<LogKind>("memo");
+  const { roleTypes, roleNames } = useApp();
+  const rolesReady = roleTypes !== null; // DB 업데이트(005) 전이면 역할 칸 숨김
 
   useEffect(() => setF(pick(stage)), [stage]);
 
@@ -115,7 +124,12 @@ export function StagePanel({
 
   async function save() {
     setSaving(true);
-    await onSave({ ...f, name: f.name.trim() || stage.name });
+    const roles = cleanRoles(f.dept_roles, f.department, f.related_departments);
+    const patch: Partial<Stage> = { ...f, name: f.name.trim() || stage.name };
+    if (JSON.stringify(roles) === JSON.stringify(cleanRoles(base.dept_roles, base.department, base.related_departments))) {
+      delete patch.dept_roles; // 바뀌지 않았으면 보내지 않음
+    } else patch.dept_roles = roles;
+    await onSave(patch);
     setSaving(false);
   }
 
@@ -192,6 +206,51 @@ export function StagePanel({
             />
             {!ro && <p className="mt-1 text-[11px] text-slate-400">찾는 부서가 없으면 관리자에게 요청하세요 (사용자 관리 › 부서)</p>}
           </div>
+          {rolesReady && (f.department || f.related_departments.length > 0) && (
+            <div data-tour="sp-roles">
+              <label className="label">
+                부서별 역할 <span className="font-normal text-slate-400">— 같은 단계라도 부서마다 맡는 일이 다를 때</span>
+              </label>
+              <div className="divide-y divide-black/[0.05] rounded-lg border border-black/10">
+                {[f.department, ...f.related_departments].filter(Boolean).map((d, i) => {
+                  const dept = d as string;
+                  const c = colorOf?.(dept);
+                  const val = f.dept_roles[dept] ?? "";
+                  const opts = val && !roleNames.includes(val) ? [...roleNames, val] : roleNames;
+                  return (
+                    <div key={dept} className="flex items-center gap-2 px-2.5 py-1.5">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c?.solid ?? "#cbd5e1" }} />
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {dept}
+                        <span className="ml-1 text-[11px] text-slate-400">{i === 0 && f.department ? "담당" : "연관"}</span>
+                      </span>
+                      <select
+                        className={`rounded-md border px-1.5 py-1 text-xs ${val ? "border-black/15 bg-white font-medium" : "border-dashed border-black/15 text-slate-400"}`}
+                        disabled={ro}
+                        value={val}
+                        title={roleTypes?.find((r) => r.name === val)?.description ?? undefined}
+                        onChange={(e) =>
+                          setF((p) => {
+                            const next = { ...p.dept_roles };
+                            if (e.target.value) next[dept] = e.target.value;
+                            else delete next[dept];
+                            return { ...p, dept_roles: next };
+                          })
+                        }
+                      >
+                        <option value="">역할 미지정</option>
+                        {opts.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div>
             <label className="label">주요내용 (단계 설명)</label>
             <textarea

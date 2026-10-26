@@ -9,7 +9,7 @@ import { Gantt } from "@/components/Gantt";
 import { DeptBadges } from "@/components/DeptPicker";
 import { ProjectFilter, type ProjectOption } from "@/components/ProjectFilter";
 import { Empty, ProgressBar, StatusChip } from "@/components/ui";
-import { collectDepartments, deptRole, rolesFor } from "@/lib/departments";
+import { collectDepartments, deptRole, roleLabel, roleOf, rolesFor } from "@/lib/departments";
 import { makeDeptColor } from "@/lib/deptColors";
 import { short, today as todayFn } from "@/lib/dates";
 import { stageFinalStatus } from "@/lib/status";
@@ -19,7 +19,7 @@ const PREF_KEY = "npd-dept";
 const PROJ_KEY = "npd-dept-projects";
 
 function DepartmentsPage() {
-  const { me, profiles, deptNames } = useApp();
+  const { me, profiles, deptNames, roleNames, roleTypes } = useApp();
   const router = useRouter();
   const params = useSearchParams();
   const today = todayFn();
@@ -32,6 +32,8 @@ function DepartmentsPage() {
   const [depts, setDepts] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[] | null>(null); // 빈 배열 = 전체
   const [order, setOrder] = useState<"project" | "date">("project");
+  const [roleFilter, setRoleFilter] = useState<string[]>([]);
+  const NONE = "__none__";
 
   useEffect(() => {
     (async () => {
@@ -119,7 +121,12 @@ function DepartmentsPage() {
   const inSel = (pid: string) => sel.length === 0 || sel.includes(pid);
   const rows = stages
     .filter((s) => projectById[s.project_id] && inSel(s.project_id) && !s.skipped && rolesFor(s, depts))
-    .filter((s) => !hideDone || !s.actual_end);
+    .filter((s) => !hideDone || !s.actual_end)
+    .filter((s) => {
+      if (!roleFilter.length) return true;
+      // 고른 부서 중 이 단계에 관련된 부서의 역할이 하나라도 맞으면 표시
+      return depts.some((d) => deptRole(s, d) && roleFilter.includes(roleOf(s, d) ?? NONE));
+    });
   const counts = (d: string) =>
     stages.filter((s) => projectById[s.project_id] && inSel(s.project_id) && !s.skipped && !s.actual_end && deptRole(s, d)).length;
 
@@ -195,6 +202,18 @@ function DepartmentsPage() {
           <span className="text-slate-500">
             프로젝트 {projectsInView} · 담당 {ownerN} · <span className="text-violet-700">협업 {relatedN}</span>
           </span>
+          {roleTypes !== null && (
+            <div data-tour="dept-roles">
+              <ProjectFilter
+                title="역할"
+                placeholder="역할 검색"
+                showCount={false}
+                options={[...roleNames.map((r) => ({ id: r, name: r, category: roleTypes.find((t) => t.name === r)?.description ?? null, count: 0 })), { id: NONE, name: "역할 미지정", category: "담당/협업으로만 표시된 단계", count: 0 }]}
+                value={roleFilter}
+                onChange={setRoleFilter}
+              />
+            </div>
+          )}
           <div data-tour="dept-projects">
             <ProjectFilter options={projectOptions} value={sel} onChange={pickProjects} />
           </div>
@@ -298,18 +317,30 @@ function DepartmentsPage() {
               </thead>
               <tbody className="divide-y divide-black/[0.05]">
                 {ganttRows.map((s) => {
-                  const role = rolesFor(s, depts);
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/60">
                       <td className="td">
                         <StatusChip status={stageFinalStatus(s, today)} size="sm" />
                       </td>
                       <td className="td">
-                        {role === "owner" ? (
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-700">담당</span>
-                        ) : (
-                          <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 ring-1 ring-inset ring-violet-200">협업</span>
-                        )}
+                        <div className="flex flex-col items-start gap-0.5">
+                          {depts
+                            .filter((d) => deptRole(s, d))
+                            .map((d) => {
+                              const owner = deptRole(s, d) === "owner";
+                              return (
+                                <span
+                                  key={d}
+                                  className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] ${
+                                    owner ? "bg-slate-100 text-slate-700" : "bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200"
+                                  }`}
+                                >
+                                  {depts.length > 1 && <span className="opacity-60">{d} </span>}
+                                  {roleLabel(s, d)}
+                                </span>
+                              );
+                            })}
+                        </div>
                       </td>
                       <td className="td">
                         <Link href={`/projects/${s.project_id}?stage=${s.id}`} className="font-medium hover:text-brand-600">
@@ -318,7 +349,7 @@ function DepartmentsPage() {
                         <div className="text-xs text-slate-400">{projectById[s.project_id]?.name}</div>
                       </td>
                       <td className="td text-xs text-slate-600">
-                        <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={depts} colorOf={colorOf} />
+                        <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={depts} colorOf={colorOf} roles={s.dept_roles} />
                       </td>
                       <td className="td whitespace-nowrap text-xs tabular-nums text-slate-600">
                         {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "—"}

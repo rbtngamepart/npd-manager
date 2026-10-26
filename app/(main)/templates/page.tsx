@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
 import { Empty, Modal, Toast } from "@/components/ui";
 import type { Template, TemplateStage } from "@/lib/types";
-import { splitDepartments } from "@/lib/departments";
+import { cleanRoles, deptWithRole, parseDeptList, parseDeptRole } from "@/lib/departments";
 
 export default function TemplatesPage() {
   const { me } = useApp();
@@ -82,7 +82,9 @@ export default function TemplatesPage() {
                     <span className="w-4 text-right text-xs tabular-nums text-slate-400">{i + 1}</span>
                     <span className="flex-1 truncate">
                       {s.name}
-                      {s.related_departments?.length ? <span className="text-xs text-violet-600"> +{s.related_departments.join(", ")}</span> : null}
+                      {s.related_departments?.length ? (
+                        <span className="text-xs text-violet-600"> +{s.related_departments.map((d) => deptWithRole(d, s.dept_roles?.[d])).join(", ")}</span>
+                      ) : null}
                     </span>
                     <span className="text-xs tabular-nums text-slate-400">
                       {s.start_week ? `${s.start_week}주~` : ""}
@@ -114,8 +116,8 @@ export default function TemplatesPage() {
               <thead className="sticky top-0 bg-slate-50">
                 <tr>
                   <th className="th">단계명</th>
-                  <th className="th w-28">담당부서</th>
-                  <th className="th w-36">연관부서 (쉼표)</th>
+                  <th className="th w-32">담당부서</th>
+                  <th className="th w-44">연관부서 (쉼표, 역할은 괄호)</th>
                   <th className="th">주요내용</th>
                   <th className="th w-20">시작주차</th>
                   <th className="th w-20">기간(주)</th>
@@ -129,14 +131,33 @@ export default function TemplatesPage() {
                       <input className="input" value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} />
                     </td>
                     <td className="p-1.5">
-                      <input className="input" value={r.department ?? ""} onChange={(e) => setRow(i, { department: e.target.value || null })} />
+                      <input
+                        className="input"
+                        defaultValue={r.department ? deptWithRole(r.department, r.dept_roles?.[r.department]) : ""}
+                        placeholder="예) 게임파트(주관)"
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          const own = v ? parseDeptRole(v) : null;
+                          const roles = { ...(r.dept_roles ?? {}) };
+                          if (r.department) delete roles[r.department];
+                          if (own?.role) roles[own.dept] = own.role;
+                          setRow(i, { department: own?.dept ?? null, dept_roles: cleanRoles(roles, own?.dept ?? null, r.related_departments ?? []) });
+                        }}
+                      />
                     </td>
                     <td className="p-1.5">
                       <input
                         className="input"
-                        defaultValue={(r.related_departments ?? []).join(", ")}
-                        placeholder="예) 구매물류팀"
-                        onBlur={(e) => setRow(i, { related_departments: splitDepartments(e.target.value) })}
+                        defaultValue={(r.related_departments ?? []).map((d) => deptWithRole(d, r.dept_roles?.[d])).join(", ")}
+                        placeholder="예) 운영팀(검토), 경영진(의결)"
+                        onBlur={(e) => {
+                          const rel = parseDeptList(e.target.value);
+                          const ownRole = r.department ? r.dept_roles?.[r.department] : undefined;
+                          const roles: Record<string, string> = { ...rel.roles };
+                          if (r.department && ownRole) roles[r.department] = ownRole;
+                          const related = rel.depts.filter((d) => d !== r.department);
+                          setRow(i, { related_departments: related, dept_roles: cleanRoles(roles, r.department ?? null, related) });
+                        }}
                       />
                     </td>
                     <td className="p-1.5">

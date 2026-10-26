@@ -91,7 +91,7 @@ export function ProgressTable({
                   <td className="td text-xs tabular-nums text-slate-400">{stages.indexOf(s) + 1}</td>
                   <td className="td font-medium">{s.name}</td>
                   <td className="td text-xs text-slate-600">
-                    <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} colorOf={colorOf} />
+                    <DeptBadges owner={s.department} related={s.related_departments ?? []} highlight={dept} colorOf={colorOf} roles={s.dept_roles} />
                   </td>
                   <td className="td whitespace-nowrap text-xs tabular-nums text-slate-600">
                     {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "—"}

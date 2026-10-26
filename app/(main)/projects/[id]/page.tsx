@@ -15,7 +15,7 @@ import { diffDays, full, relativeTime, short, today as todayFn, weekNumber } fro
 import { stageAutoStatus, stageFinalStatus, summarize } from "@/lib/status";
 import { toTemplate } from "@/lib/templates";
 import { useTourEvents } from "@/components/Tour";
-import { collectDepartments, deptRole, matchesDepts } from "@/lib/departments";
+import { collectDepartments, deptRole, deptWithRole, matchesDepts } from "@/lib/departments";
 import { ProjectFilter } from "@/components/ProjectFilter";
 import { makeDeptColor } from "@/lib/deptColors";
 import type { Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
@@ -223,7 +223,10 @@ function ProjectPage() {
       const sw = project.start_date && s.plan_start ? weekNumber(project.start_date, s.plan_start) : "";
       const wk = s.plan_start && s.plan_end ? Math.ceil((diffDays(s.plan_start, s.plan_end) + 1) / 7) : "";
       return [
-        s.name, s.department, (s.related_departments ?? []).join(", "), s.description, sw, wk, s.plan_start, s.plan_end, s.actual_start, s.expected_end,
+        s.name,
+        s.department ? deptWithRole(s.department, s.dept_roles?.[s.department]) : "",
+        (s.related_departments ?? []).map((d) => deptWithRole(d, s.dept_roles?.[d])).join(", "),
+        s.description, sw, wk, s.plan_start, s.plan_end, s.actual_start, s.expected_end,
         s.actual_end, `${s.progress}%`, label(stageAutoStatus(s, today)), label(s.pm_status),
         label(stageFinalStatus(s, today)), s.issue, s.next_action, s.assignee, s.needs_check ? "TRUE" : "FALSE",
         s.skipped ? "TRUE" : "",
@@ -596,6 +599,7 @@ function ProjectPage() {
           myId={me.id}
           profileById={profileById}
           departments={departments}
+          colorOf={colorOf}
           onSave={async (patch) => {
             await updateStage(sel.id, patch);
             toast("저장했습니다");

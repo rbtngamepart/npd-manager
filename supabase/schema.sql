@@ -147,6 +147,8 @@ create index if not exists stages_project_idx on public.stages(project_id, sort_
 -- (이미 만든 DB에 연관부서 칸 추가)
 alter table public.stages add column if not exists related_departments text[] not null default '{}';
 create index if not exists stages_related_idx on public.stages using gin(related_departments);
+-- (부서별 역할: {"게임파트":"주관","운영팀":"의견 청취"})
+alter table public.stages add column if not exists dept_roles jsonb not null default '{}'::jsonb;
 
 -- ---------------------------------------------------------------------
 -- 4. 진행 기록 (누적 메모)  — 단계가 삭제돼도 기록은 남김
@@ -201,6 +203,10 @@ begin
   if new.related_departments is distinct from old.related_departments then
     msgs := msgs || format('연관부서 %s',
       coalesce(nullif(array_to_string(new.related_departments, ', '), ''), '없음'));
+  end if;
+  if new.dept_roles is distinct from old.dept_roles then
+    msgs := msgs || format('역할 %s', coalesce(
+      (select string_agg(k || ' ' || (v #>> '{}'), ', ' order by k) from jsonb_each(new.dept_roles) as x(k, v)), '없음'));
   end if;
   if array_length(msgs, 1) > 0 then
     insert into public.stage_logs (project_id, stage_id, stage_name, kind, body, author_id)
@@ -407,6 +413,21 @@ begin
      ), '[]'::jsonb)
    where t.stages::text like '%' || old_name || '%';
 
+  -- 부서별 역할의 부서 이름도 변경 (합치는 경우 기존 역할 유지)
+  update public.stages
+     set dept_roles = jsonb_build_object(n, dept_roles->old_name) || (dept_roles - old_name)
+   where dept_roles ? old_name;
+  update public.templates t
+     set stages = coalesce((
+       select jsonb_agg(
+                case when jsonb_typeof(e->'dept_roles') = 'object' and (e->'dept_roles') ? old_name
+                     then jsonb_set(e, '{dept_roles}', jsonb_build_object(n, e->'dept_roles'->old_name) || ((e->'dept_roles') - old_name))
+                     else e end
+                order by ord)
+       from jsonb_array_elements(t.stages) with ordinality as x(e, ord)
+     ), '[]'::jsonb)
+   where t.stages::text like '%' || old_name || '%';
+
   perform set_config('npd.skip_log', 'off', true);
 end $$;
 
@@ -504,6 +525,79 @@ drop trigger if exists invites_apply_existing on public.invites;
 create trigger invites_apply_existing
   after insert or update of department, name, is_game_part, is_admin, project_ids on public.invites
   for each row execute function public.apply_invite_to_existing();
+
+-- ---------------------------------------------------------------------
+-- 역할 종류 (단계에서 부서마다 맡는 역할: 주관, 의결, 검토, 협의 …)
+-- ---------------------------------------------------------------------
+create table if not exists public.role_types (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null unique,
+  description text,
+  sort_order  int  not null default 0,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.role_types enable row level security;
+drop policy if exists "role_types read"  on public.role_types;
+drop policy if exists "role_types write" on public.role_types;
+create policy "role_types read"  on public.role_types for select using (public.is_approved());
+create policy "role_types write" on public.role_types for all
+  using (public.is_admin()) with check (public.is_admin());
+
+insert into public.role_types (name, description, sort_order) values
+  ('주관',     '실제로 업무를 수행하고 결과를 책임짐', 0),
+  ('의결',     '최종 결정·승인',                       1),
+  ('검토',     '결과물을 확인하고 의견·수정 요청',     2),
+  ('협의',     '함께 논의해 방향을 정함',              3),
+  ('의견 청취', '의견을 듣고, 반영 여부는 주관 부서가 판단', 4),
+  ('공유',     '진행 상황만 공유받음',                  5)
+on conflict (name) do nothing;
+
+-- 역할 이름 변경 / 합치기: 모든 단계·템플릿에 반영
+create or replace function public.rename_role_type(old_name text, new_name text)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  n text := btrim(coalesce(new_name, ''));
+begin
+  if not public.is_admin() then
+    raise exception '관리자만 역할 이름을 바꿀 수 있습니다';
+  end if;
+  if n = '' then
+    raise exception '새 역할 이름을 입력하세요';
+  end if;
+  if old_name = n then
+    return;
+  end if;
+
+  perform set_config('npd.skip_log', 'on', true);
+
+  if exists (select 1 from public.role_types where name = n) then
+    delete from public.role_types where name = old_name;
+  else
+    update public.role_types set name = n where name = old_name;
+  end if;
+
+  update public.stages s
+     set dept_roles = (
+       select coalesce(jsonb_object_agg(k, case when v #>> '{}' = old_name then to_jsonb(n) else v end), '{}'::jsonb)
+       from jsonb_each(s.dept_roles) as x(k, v))
+   where exists (select 1 from jsonb_each_text(s.dept_roles) as y(k, v) where v = old_name);
+
+  update public.templates t
+     set stages = coalesce((
+       select jsonb_agg(
+                case when jsonb_typeof(e->'dept_roles') = 'object' then
+                  jsonb_set(e, '{dept_roles}', (
+                    select coalesce(jsonb_object_agg(k, case when v #>> '{}' = old_name then to_jsonb(n) else v end), '{}'::jsonb)
+                    from jsonb_each(e->'dept_roles') as x(k, v)))
+                else e end
+                order by ord)
+       from jsonb_array_elements(t.stages) with ordinality as x(e, ord)
+     ), '[]'::jsonb)
+   where t.stages::text like '%' || old_name || '%';
+
+  perform set_config('npd.skip_log', 'off', true);
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 8. 실시간 반영 (다른 사람이 수정하면 화면이 자동 갱신)

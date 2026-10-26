@@ -2,8 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
-import { DEFAULT_DEPARTMENTS } from "@/lib/departments";
-import type { Department, Profile } from "@/lib/types";
+import { DEFAULT_DEPARTMENTS, DEFAULT_ROLES } from "@/lib/departments";
+import type { Department, Profile, RoleType } from "@/lib/types";
 
 interface Ctx {
   me: Profile | null;
@@ -16,6 +16,10 @@ interface Ctx {
   /** 화면에서 고를 수 있는 부서 이름 */
   deptNames: string[];
   reloadDepartments: () => Promise<void>;
+  /** 관리자가 정한 역할 종류. 아직 DB 업데이트 전이면 null */
+  roleTypes: RoleType[] | null;
+  roleNames: string[];
+  reloadRoles: () => Promise<void>;
 }
 
 export const AppCtx = createContext<Ctx>({
@@ -27,6 +31,9 @@ export const AppCtx = createContext<Ctx>({
   departments: null,
   deptNames: DEFAULT_DEPARTMENTS,
   reloadDepartments: async () => {},
+  roleTypes: null,
+  roleNames: DEFAULT_ROLES,
+  reloadRoles: async () => {},
 });
 
 export function useApp() {
@@ -43,6 +50,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [roleTypes, setRoleTypes] = useState<RoleType[] | null>(null);
+
+  const reloadRoles = useCallback(async () => {
+    const { data, error } = await supabase().from("role_types").select("*").order("sort_order").order("name");
+    setRoleTypes(error ? null : ((data ?? []) as RoleType[]));
+  }, []);
 
   const reloadDepartments = useCallback(async () => {
     const { data, error } = await supabase().from("departments").select("*").order("sort_order").order("name");
@@ -59,12 +72,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
-    const [{ data }] = await Promise.all([sb.from("profiles").select("*").order("created_at"), reloadDepartments()]);
+    const [{ data }] = await Promise.all([sb.from("profiles").select("*").order("created_at"), reloadDepartments(), reloadRoles()]);
     const list = (data ?? []) as Profile[];
     setProfiles(list);
     setMe(list.find((p) => p.id === user.id) ?? null);
     setLoading(false);
-  }, [reloadDepartments]);
+  }, [reloadDepartments, reloadRoles]);
 
   useEffect(() => {
     reloadProfiles();
@@ -80,8 +93,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return Array.from(set);
   }, [departments, profiles]);
 
+  const roleNames = useMemo(() => (roleTypes && roleTypes.length ? roleTypes.map((r) => r.name) : DEFAULT_ROLES), [roleTypes]);
+
   return (
-    <AppCtx.Provider value={{ me, profiles, profileById, reloadProfiles, loading, departments, deptNames, reloadDepartments }}>
+    <AppCtx.Provider
+      value={{ me, profiles, profileById, reloadProfiles, loading, departments, deptNames, reloadDepartments, roleTypes, roleNames, reloadRoles }}
+    >
       {children}
     </AppCtx.Provider>
   );
