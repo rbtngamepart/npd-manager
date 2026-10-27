@@ -32,6 +32,8 @@ export function ProjectSettings({
   const [description, setDescription] = useState(project.description ?? "");
   const [start, setStart] = useState(project.start_date ?? "");
   const [pmId, setPmId] = useState(project.pm_id ?? "");
+  const calReady = project.calendar_tags !== undefined; // 006 업데이트 후
+  const [tags, setTags] = useState((project.calendar_tags ?? []).join(", "));
   const [shift, setShift] = useState(true);
   const [busy, setBusy] = useState(false);
   const [addId, setAddId] = useState("");
@@ -53,6 +55,18 @@ export function ProjectSettings({
         description: description.trim() || null,
         start_date: start || null,
         pm_id: pmId || null,
+        ...(calReady
+          ? {
+              calendar_tags: Array.from(
+                new Set(
+                  tags
+                    .split(/[,\n]/)
+                    .map((t) => t.replace(/^[\[【［]|[\]】］]$/g, "").trim())
+                    .filter(Boolean)
+                )
+              ),
+            }
+          : {}),
       })
       .eq("id", project.id);
     if (startChanged && shift && delta !== 0) {
@@ -131,6 +145,15 @@ export function ProjectSettings({
             </label>
           )}
         </div>
+        {calReady && (
+          <div data-tour="ps-calendar">
+            <label className="label">📅 캘린더 말머리 (여러 개는 쉼표로)</label>
+            <input className="input" disabled={ro} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="예) OG26, 오리지널게임" />
+            <p className="mt-1 text-[11px] text-slate-400">
+              구글 캘린더 일정 제목이 <code>[{(tags.split(",")[0] || "말머리").trim()}] 단계명</code> 이면 이 프로젝트 단계로 들어옵니다. 프로젝트 이름과 같은 말머리는 따로 적지 않아도 연결돼요.
+            </p>
+          </div>
+        )}
         <div>
           <label className="label">설명</label>
           <textarea className="input min-h-20" disabled={ro} value={description} onChange={(e) => setDescription(e.target.value)} />

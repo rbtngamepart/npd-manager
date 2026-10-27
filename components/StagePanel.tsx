@@ -10,6 +10,7 @@ import { DeptPicker, DeptSelect } from "./DeptPicker";
 import { useApp } from "./AppProvider";
 import { cleanRoles } from "@/lib/departments";
 import type { DeptColorFn } from "@/lib/deptColors";
+import type { CalendarEvent } from "@/lib/types";
 
 const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -37,6 +38,8 @@ type Form = Pick<
   | "assignee"
   | "needs_check"
   | "skipped"
+  | "cal_follow"
+  | "cal_linked"
 >;
 
 function pick(s: Stage): Form {
@@ -58,6 +61,8 @@ function pick(s: Stage): Form {
     assignee: s.assignee,
     needs_check: s.needs_check,
     skipped: s.skipped,
+    cal_follow: s.cal_follow,
+    cal_linked: s.cal_linked,
   };
 }
 
@@ -73,6 +78,7 @@ export function StagePanel({
   profileById,
   departments,
   colorOf,
+  calEvents = [],
   onSave,
   onDelete,
   onMove,
@@ -91,6 +97,8 @@ export function StagePanel({
   profileById: Record<string, Profile>;
   departments: string[];
   colorOf?: DeptColorFn;
+  /** 이 단계에 연결된 구글 캘린더 일정 */
+  calEvents?: CalendarEvent[];
   onSave: (patch: Partial<Stage>) => Promise<void>;
   onDelete: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -126,6 +134,10 @@ export function StagePanel({
     setSaving(true);
     const roles = cleanRoles(f.dept_roles, f.department, f.related_departments);
     const patch: Partial<Stage> = { ...f, name: f.name.trim() || stage.name };
+    if (stage.cal_linked === undefined) {
+      delete patch.cal_follow; // 006 업데이트 전
+      delete patch.cal_linked;
+    }
     if (JSON.stringify(roles) === JSON.stringify(cleanRoles(base.dept_roles, base.department, base.related_departments))) {
       delete patch.dept_roles; // 바뀌지 않았으면 보내지 않음
     } else patch.dept_roles = roles;
@@ -146,6 +158,7 @@ export function StagePanel({
 
   const auto = stageAutoStatus({ ...stage, ...f }, today);
   const ro = !canEdit;
+  const planLocked = !!f.cal_linked && f.cal_follow !== false;
 
   return (
     <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[460px] flex-col border-l border-black/10 bg-white shadow-2xl">
@@ -176,6 +189,38 @@ export function StagePanel({
             disabled={ro}
             onChange={(e) => set("name", e.target.value)}
           />
+          {f.cal_linked && (
+            <div className={`rounded-lg px-3 py-2 text-xs ${stage.cal_missing ? "bg-amber-50 text-amber-900" : "bg-sky-50 text-sky-900"}`} data-tour="sp-calendar">
+              <div className="flex items-center gap-2">
+                <span>📅</span>
+                <span className="flex-1">
+                  {stage.cal_missing
+                    ? "연결된 캘린더 일정이 모두 사라졌습니다. 단계가 필요 없으면 '미사용' 또는 삭제하세요."
+                    : planLocked
+                      ? "구글 캘린더 일정을 따릅니다. 계획 날짜는 캘린더에서 바꾸세요."
+                      : "캘린더와 연결돼 있지만 계획 날짜는 NPD에서 직접 관리합니다."}
+                </span>
+              </div>
+              {canEdit && (
+                <div className="mt-1.5 flex flex-wrap gap-3">
+                  <label className="flex items-center gap-1">
+                    <input type="checkbox" checked={f.cal_follow !== false} onChange={(e) => set("cal_follow", e.target.checked)} />
+                    캘린더 일정 따르기
+                  </label>
+                  <button
+                    type="button"
+                    className="underline-offset-2 opacity-70 hover:underline"
+                    onClick={() => {
+                      if (confirm("캘린더 연결을 끊을까요? 다음 동기화 때 같은 이름 일정이 있으면 다시 연결됩니다.\n(계속 따로 관리하려면 '캘린더 일정 따르기'만 끄세요)"))
+                        setF((p) => ({ ...p, cal_linked: false }));
+                    }}
+                  >
+                    연결 끊기
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="label">담당부서</label>
@@ -272,7 +317,7 @@ export function StagePanel({
                   type="number"
                   min={1}
                   className="input"
-                  disabled={ro}
+                  disabled={ro || planLocked}
                   value={weeks?.startWeek ?? ""}
                   placeholder="예) 3"
                   onChange={(e) => setWeeks(Number(e.target.value) || null, weeks?.weeks ?? 1)}
@@ -284,7 +329,7 @@ export function StagePanel({
                   type="number"
                   min={1}
                   className="input"
-                  disabled={ro}
+                  disabled={ro || planLocked}
                   value={weeks?.weeks ?? ""}
                   placeholder="예) 4"
                   onChange={(e) => setWeeks(weeks?.startWeek ?? 1, Number(e.target.value) || null)}
@@ -295,11 +340,11 @@ export function StagePanel({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="label">계획 시작일</label>
-              <input type="date" className="input" disabled={ro} value={f.plan_start ?? ""} onChange={(e) => set("plan_start", nul(e.target.value))} />
+              <input type="date" className="input" disabled={ro || planLocked} value={f.plan_start ?? ""} onChange={(e) => set("plan_start", nul(e.target.value))} />
             </div>
             <div>
               <label className="label">계획 종료일</label>
-              <input type="date" className="input" disabled={ro} value={f.plan_end ?? ""} onChange={(e) => set("plan_end", nul(e.target.value))} />
+              <input type="date" className="input" disabled={ro || planLocked} value={f.plan_end ?? ""} onChange={(e) => set("plan_end", nul(e.target.value))} />
             </div>
           </div>
           {projectStart && <p className="text-[11px] text-slate-400">주차를 입력하면 날짜가 자동 계산되고, 날짜를 고치면 주차가 바뀝니다.</p>}
@@ -370,6 +415,34 @@ export function StagePanel({
             </label>
           </div>
         </section>
+
+        {calEvents.length > 0 && (
+          <section className="space-y-2 border-t border-black/[0.06] pt-4" data-tour="sp-cal-events">
+            <h3 className="text-xs font-semibold text-slate-700">📅 캘린더 일정 {calEvents.filter((e) => !e.removed).length}개</h3>
+            <ol className="space-y-1">
+              {calEvents
+                .slice()
+                .sort((a, b) => a.start_date.localeCompare(b.start_date) || (a.start_at ?? "").localeCompare(b.start_at ?? ""))
+                .map((e) => (
+                  <li key={e.key} className={`flex items-baseline gap-2 text-xs ${e.removed ? "text-slate-300 line-through" : e.end_date < today ? "text-slate-500" : "text-ink"}`}>
+                    <span className="w-24 shrink-0 tabular-nums">
+                      {short(e.start_date)}
+                      {e.end_date !== e.start_date ? `~${short(e.end_date)}` : ""}
+                      {!e.all_day && e.start_at && (
+                        <span className="ml-1 text-slate-400">
+                          {new Date(e.start_at).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false })}
+                        </span>
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      {e.detail ?? e.stage_name}
+                      {e.done && <span className="ml-1">✅</span>}
+                    </span>
+                  </li>
+                ))}
+            </ol>
+          </section>
+        )}
 
         <section className="space-y-3 border-t border-black/[0.06] pt-4" data-tour="sp-log">
           <h3 className="text-xs font-semibold text-slate-700">진행 기록</h3>

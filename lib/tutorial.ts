@@ -5,7 +5,7 @@
 // event   : 화면에 보내는 동작 (탭 전환, 단계 패널 열기 등)
 // role    : 이 권한이 있을 때만 보여줌
 
-export type TourRoute = "/" | "/projects/new" | "/templates" | "/admin" | "/departments" | "project";
+export type TourRoute = "/" | "/projects/new" | "/templates" | "/admin" | "/departments" | "/calendar" | "project";
 export type Role = "editor" | "gamepart" | "admin";
 
 export type TourEvent =
@@ -361,6 +361,38 @@ export const CHAPTERS: Chapter[] = [
         target: "dept-view",
         title: "간트 / 목록",
         body: "· 간트: 여러 프로젝트의 일정을 한 줄로 이어서 보기 (이름 아래 프로젝트명)\n· 목록: 상태·역할(담당/협업)·다음 액션을 표로\n\n단계를 누르면 해당 프로젝트의 단계 상세가 열립니다. 다른 부서와 협의할 때 이 화면을 함께 보면 편해요.",
+      },
+    ],
+  },
+  {
+    id: "calendar",
+    title: "구글 캘린더 연동",
+    desc: "캘린더 일정을 단계로 자동 반영",
+    minutes: 2,
+    steps: [
+      {
+        route: "/calendar",
+        target: "cal-rules",
+        title: "일정 제목에 [말머리]",
+        body: "구글 캘린더 일정 제목 앞에 [프로젝트 말머리]를 붙이면 그 프로젝트의 단계로 자동 반영됩니다.\n\n· [OG26] 게임 개발 → '게임 개발' 단계\n· [OG26] 공모전 심사 - 1차 평가 → '공모전 심사' 단계의 세부 일정\n· 같은 단계명 일정들은 첫 일정~마지막 일정이 단계 기간\n· 마지막 일정에 ✅ → 완료 처리\n\n말머리가 없는 개인 일정은 읽지도 저장하지도 않아요.",
+      },
+      {
+        route: "/calendar",
+        target: "cal-mine",
+        title: "내 캘린더 연결 (한 번만)",
+        body: "각자 자기 구글 캘린더의 'iCal 형식의 비공개 주소'를 붙여넣어 연결합니다. 주소는 본인만 볼 수 있어요.\n\n같은 회의가 여러 사람 캘린더에 있어도 한 번만 셉니다. 일정을 만든 사람의 부서가 담당, 참석자 부서가 연관부서로 자동 입력돼요.",
+      },
+      {
+        route: "/calendar",
+        target: "cal-inbox",
+        title: "연동 대기함",
+        body: "처음 보는 말머리는 여기 모입니다. 기존 프로젝트에 연결하거나, 새 프로젝트로 만들거나, 무시할 수 있어요. 연결하면 바로 단계가 만들어집니다.\n\n프로젝트 [설정·권한]의 '캘린더 말머리'에서도 정할 수 있어요.",
+      },
+      {
+        route: "/calendar",
+        target: "cal-sync",
+        title: "동기화",
+        body: "매시 정각에 자동으로 동기화되고, 사이트를 열 때도 30분이 지났으면 한 번 더 합니다. 급하면 [지금 동기화]를 누르세요.\n\n간트에서 📅 표시가 붙은 단계는 캘린더 일정을 따르므로 날짜는 캘린더에서 바꿉니다. 단계 상세에서 '캘린더 일정 따르기'를 끄면 NPD에서 직접 관리할 수 있어요.",
       },
     ],
   },

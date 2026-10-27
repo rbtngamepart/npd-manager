@@ -27,7 +27,8 @@ export async function middleware(request: NextRequest) {
   } = await sb.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isPublic = ["/login", "/auth", "/privacy", "/terms"].some((p) => path.startsWith(p));
+  // /api 는 각 경로에서 직접 권한 확인 (정기 동기화는 로그인 없이 비밀 키로 호출)
+  const isPublic = ["/login", "/auth", "/privacy", "/terms", "/api/"].some((p) => path.startsWith(p));
   if (!user && !isPublic) {
     const to = request.nextUrl.clone();
     to.pathname = "/login";

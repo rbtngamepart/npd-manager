@@ -264,6 +264,8 @@ export function Gantt({
           const selected = selectedId === s.id;
           const actualEnd = s.actual_end ?? (s.actual_start ? today : null);
           const dc = colorOf ? colorOf(s.department) : null;
+          // 캘린더가 계획일을 정하는 단계는 끌어서 바꾸지 않음
+          const locked = !!s.cal_linked && s.cal_follow !== false;
           const byDept = colorBy === "dept" && dc;
           const newGroup = groupByDept && (i === 0 || stages[i - 1].department !== s.department);
           return (
@@ -349,6 +351,13 @@ export function Gantt({
                     </span>
                   );
                 })()}
+                {s.cal_missing ? (
+                  <span className="shrink-0 text-[11px]" title="연결된 캘린더 일정이 사라졌습니다">⚠️</span>
+                ) : s.cal_linked ? (
+                  <span className={`shrink-0 text-[11px] ${locked ? "" : "opacity-40"}`} title={locked ? "구글 캘린더 일정을 따름 (일정은 캘린더에서 변경)" : "캘린더 연결됨 (계획일은 NPD에서 직접 관리)"}>
+                    📅
+                  </span>
+                ) : null}
                 {s.needs_check && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" title="확인 필요" />}
               </button>
 
@@ -383,7 +392,7 @@ export function Gantt({
                     data-tour={s.id === firstBarId ? "gantt-bar" : undefined}
                     className={`absolute top-[9px] h-[16px] overflow-hidden rounded-md ${
                       byDept ? "" : s.skipped ? "bg-slate-200" : "bg-slate-200/80"
-                    } ${canEdit && !s.skipped ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${
+                    } ${canEdit && !s.skipped && !locked ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${
                       isDrag ? "ring-2 ring-brand-500" : selected ? "ring-2 ring-ink/70" : ""
                     }`}
                     style={{
@@ -391,20 +400,20 @@ export function Gantt({
                       width: Math.max(ppd, (diffDays(ps, pe) + 1) * ppd),
                       ...(byDept ? { background: dc.light, boxShadow: `inset 0 0 0 1px ${dc.solid}55` } : {}),
                     }}
-                    onPointerDown={(e) => (s.skipped ? undefined : begin(e, s, "move"))}
+                    onPointerDown={(e) => (s.skipped || locked ? undefined : begin(e, s, "move"))}
                     onPointerMove={move}
                     onPointerUp={end}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!canEdit || s.skipped) onSelect(s.id);
+                      if (!canEdit || s.skipped || locked) onSelect(s.id);
                     }}
-                    title={`${s.name}\n계획 ${short(ps)} ~ ${short(pe)}${s.progress ? `\n진행률 ${s.progress}%` : ""}`}
+                    title={`${s.name}\n계획 ${short(ps)} ~ ${short(pe)}${s.progress ? `\n진행률 ${s.progress}%` : ""}${locked ? "\n📅 구글 캘린더 일정을 따름" : ""}`}
                   >
                     <div
                       className={`h-full ${byDept ? "" : meta ? meta.bar : "bg-slate-400"} opacity-90`}
                       style={{ width: `${s.actual_end ? 100 : s.progress}%`, ...(byDept ? { background: dc.solid } : {}) }}
                     />
-                    {canEdit && !s.skipped && (
+                    {canEdit && !s.skipped && !locked && (
                       <>
                         <span
                           className="absolute inset-y-0 left-0 w-2 cursor-ew-resize hover:bg-black/15"

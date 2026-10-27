@@ -21,6 +21,8 @@ export interface Project {
   pm_status: Light | null;
   pm_memo: string | null;
   archived: boolean;
+  /** 구글 캘린더 말머리 (006 업데이트 후) */
+  calendar_tags?: string[];
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -48,6 +50,10 @@ export interface Stage {
   assignee: string | null;
   needs_check: boolean;
   skipped: boolean;
+  /** 구글 캘린더 연동 (006 업데이트 후) */
+  cal_linked?: boolean;
+  cal_follow?: boolean;
+  cal_missing?: boolean;
   updated_at: string;
   updated_by: string | null;
 }
@@ -116,5 +122,38 @@ export interface RoleType {
   name: string;
   description: string | null;
   sort_order: number;
+  created_at: string;
+}
+
+export interface CalendarEvent {
+  key: string;
+  uid: string;
+  source_ids: string[];
+  tag: string;
+  tag_norm: string;
+  project_id: string | null;
+  stage_id: string | null;
+  stage_name: string;
+  detail: string | null;
+  title: string;
+  start_date: string;
+  end_date: string;
+  start_at: string | null;
+  all_day: boolean;
+  done: boolean;
+  organizer: string | null;
+  attendees: string[];
+  removed: boolean;
+  last_seen_at: string;
+}
+
+export interface CalendarSourceInfo {
+  id: string;
+  owner_id: string;
+  label: string | null;
+  enabled: boolean;
+  last_synced_at: string | null;
+  last_error: string | null;
+  event_count: number;
   created_at: string;
 }

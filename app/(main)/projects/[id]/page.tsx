@@ -18,7 +18,8 @@ import { useTourEvents } from "@/components/Tour";
 import { collectDepartments, deptRole, deptWithRole, matchesDepts } from "@/lib/departments";
 import { ProjectFilter } from "@/components/ProjectFilter";
 import { makeDeptColor } from "@/lib/deptColors";
-import type { Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
+import type { CalendarEvent, Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
+import { runCalendarSync, summaryText } from "@/lib/calendar/client";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
 
@@ -33,6 +34,8 @@ function ProjectPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [logs, setLogs] = useState<StageLog[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [calEvents, setCalEvents] = useState<CalendarEvent[] | null>(null); // null = 006 업데이트 전
+  const [calSyncing, setCalSyncing] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string[]>([]);
   const toggleDept = (d: string) => setDeptFilter((f) => (f.includes(d) ? f.filter((x) => x !== d) : [...f, d]));
   const [colorBy, setColorByState] = useState<"dept" | "status">("dept");
@@ -90,6 +93,8 @@ function ProjectPage() {
     setStages((s.data ?? []) as Stage[]);
     setLogs((l.data ?? []) as StageLog[]);
     setMembers((m.data ?? []) as ProjectMember[]);
+    const ce = await sb.from("calendar_events").select("*").eq("project_id", id);
+    setCalEvents(ce.error ? null : ((ce.data ?? []) as CalendarEvent[]));
     setLoading(false);
   }, [id]);
 
@@ -109,8 +114,10 @@ function ProjectPage() {
       .on("postgres_changes", { event: "*", schema: "public", table: "projects", filter: `id=eq.${id}` }, debounced)
       .subscribe();
     window.addEventListener("focus", load);
+    window.addEventListener("npd-calendar-synced", load);
     return () => {
       window.removeEventListener("focus", load);
+      window.removeEventListener("npd-calendar-synced", load);
       sb.removeChannel(ch);
     };
   }, [id, load]);
@@ -414,6 +421,26 @@ function ProjectPage() {
                 ))}
               </div>
             )}
+            {calEvents !== null && (tab === "gantt" || tab === "pm") && (
+              <button
+                className="btn-ghost py-1 text-xs"
+                disabled={calSyncing}
+                data-tour="proj-cal-sync"
+                title={
+                  (project.calendar_tags ?? []).length
+                    ? `캘린더 말머리: ${(project.calendar_tags ?? []).map((t) => `[${t}]`).join(" ")}`
+                    : `캘린더 말머리: [${project.name}] (설정·권한에서 추가 가능)`
+                }
+                onClick={async () => {
+                  setCalSyncing(true);
+                  const r = await runCalendarSync();
+                  setCalSyncing(false);
+                  toast(summaryText(r));
+                }}
+              >
+                {calSyncing ? "📅 동기화 중…" : "📅 캘린더 동기화"}
+              </button>
+            )}
             {canEdit && (tab === "gantt" || tab === "pm") && (
               <>
                 <button className="btn-outline py-1 text-xs" onClick={() => setImportOpen(true)} data-tour="import-btn">
@@ -600,6 +627,7 @@ function ProjectPage() {
           profileById={profileById}
           departments={departments}
           colorOf={colorOf}
+          calEvents={(calEvents ?? []).filter((e) => e.stage_id === sel.id)}
           onSave={async (patch) => {
             await updateStage(sel.id, patch);
             toast("저장했습니다");

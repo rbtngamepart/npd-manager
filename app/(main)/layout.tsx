@@ -5,12 +5,37 @@ import { usePathname, useRouter } from "next/navigation";
 import { AppProvider, displayName, useApp } from "@/components/AppProvider";
 import { supabase } from "@/lib/supabase/client";
 import { TourProvider, useTour } from "@/components/Tour";
+import { useEffect } from "react";
+import { runCalendarSync } from "@/lib/calendar/client";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { me, loading } = useApp();
   const { openMenu } = useTour();
   const path = usePathname();
   const router = useRouter();
+
+  // 구글 캘린더 자동 동기화: 마지막 동기화가 30분 넘었으면 화면을 연 김에 한 번 (정기 실행이 놓친 경우 대비)
+  useEffect(() => {
+    if (!me?.approved) return;
+    let flag = false;
+    try {
+      flag = sessionStorage.getItem("npd-cal-auto") === "1";
+      sessionStorage.setItem("npd-cal-auto", "1");
+    } catch {
+      /* 무시 */
+    }
+    if (flag) return;
+    (async () => {
+      const sb = supabase();
+      const { data, error } = await sb.from("calendar_sync_state").select("last_run_at").maybeSingle();
+      if (error) return; // 006 업데이트 전
+      const last = data?.last_run_at ? new Date(data.last_run_at).getTime() : 0;
+      if (Date.now() - last < 30 * 60 * 1000) return;
+      const { data: srcs } = await sb.rpc("calendar_sources_overview");
+      if (!srcs?.length) return;
+      runCalendarSync();
+    })();
+  }, [me?.approved]);
 
   async function logout() {
     await supabase().auth.signOut();
@@ -58,6 +83,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const nav = [
     { href: "/", label: "대시보드" },
     { href: "/departments", label: "부서별 일정" },
+    { href: "/calendar", label: "캘린더 연동" },
     { href: "/templates", label: "템플릿" },
     ...(me.is_admin ? [{ href: "/admin", label: "사용자 관리" }] : []),
   ];

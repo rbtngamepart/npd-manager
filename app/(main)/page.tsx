@@ -43,7 +43,11 @@ export default function Dashboard() {
     load();
     const onFocus = () => load();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    window.addEventListener("npd-calendar-synced", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("npd-calendar-synced", onFocus);
+    };
   }, []);
 
   const byProject = useMemo(() => {
