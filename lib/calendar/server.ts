@@ -2,7 +2,9 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
-import { parseCalendar } from "./ics";
+import { parseCalendar, type CalEvent } from "./ics";
+import { createHash } from "node:crypto";
+import { addDaysStr, fromScript, isDate, type ScriptEvent } from "./script";
 import { planSync, type EventRow, type ProjectRow, type StageRow } from "./apply";
 
 export const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
@@ -40,12 +42,60 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
   );
 }
 
+/**
+ * 캘린더 하나에서 읽은 말머리 일정 저장.
+ * window를 주면 그 기간 안에서 안 보인 일정만 '사라짐' 처리 (기간 밖 옛 일정은 그대로 둠)
+ */
+export async function storeEvents(sourceId: string, events: CalEvent[], window?: { from: string; to: string }) {
+  const db = supabaseAdmin();
+  const keys = events.map((e) => e.key);
+  const existing = new Map<string, { key: string; source_ids: string[] }>();
+  const { data: mine, error: me } = await db
+    .from("calendar_events")
+    .select("key,source_ids,start_date,end_date")
+    .contains("source_ids", [sourceId]);
+  if (me) throw me;
+  (mine ?? []).forEach((r) => existing.set(r.key, r));
+  await chunked(keys, 200, async (part) => {
+    const { data } = await db.from("calendar_events").select("key,source_ids").in("key", part);
+    (data ?? []).forEach((r) => existing.set(r.key, r));
+  });
+
+  const now = new Date().toISOString();
+  const rows = events.map((e) => ({
+    ...e,
+    source_ids: Array.from(new Set([...(existing.get(e.key)?.source_ids ?? []), sourceId])),
+    removed: false,
+    last_seen_at: now,
+    updated_at: now,
+  }));
+  await chunked(rows, 300, async (part) => {
+    const { error: e } = await db.from("calendar_events").upsert(part, { onConflict: "key" });
+    if (e) throw e;
+  });
+
+  // 이번에 안 보인 일정: 이 캘린더를 빼고, 아무 캘린더에도 없으면 '사라짐'
+  const seen = new Set(keys);
+  const gone = (mine ?? []).filter(
+    (r) => !seen.has(r.key) && (!window || (r.end_date >= window.from && r.start_date <= window.to))
+  );
+  await pool(gone, 8, async (r) => {
+    const left = r.source_ids.filter((s: string) => s !== sourceId);
+    await db
+      .from("calendar_events")
+      .update({ source_ids: left, removed: left.length === 0, updated_at: now })
+      .eq("key", r.key);
+  });
+  return { removed: gone.length };
+}
+
 /** 캘린더 하나 읽어서 말머리 일정 저장 */
 export async function syncSource(sourceId: string) {
   const db = supabaseAdmin();
   const { data: src, error } = await db.from("calendar_sources").select("*").eq("id", sourceId).maybeSingle();
   if (error) throw error;
   if (!src) throw new Error("캘린더를 찾을 수 없습니다");
+  if (src.kind === "script") return { ok: true, skipped: true }; // Apps Script가 직접 보내줌
   try {
     if (!String(src.ics_url).startsWith("https://calendar.google.com/calendar/ical/")) throw new Error("구글 캘린더 비공개 주소가 아닙니다");
     const ctrl = new AbortController();
@@ -62,42 +112,11 @@ export async function syncSource(sourceId: string) {
     if (!raw.includes("BEGIN:VCALENDAR")) throw new Error("iCal 형식이 아닙니다. 'iCal 형식의 비공개 주소'를 복사했는지 확인해 주세요.");
     const { events, total } = parseCalendar(raw, today());
 
-    // 기존 행 (이 캘린더가 가진 것 + 이번에 나온 key)
-    const keys = events.map((e) => e.key);
-    const existing = new Map<string, { key: string; source_ids: string[] }>();
-    const { data: mine } = await db.from("calendar_events").select("key,source_ids").contains("source_ids", [sourceId]);
-    (mine ?? []).forEach((r) => existing.set(r.key, r));
-    await chunked(keys, 200, async (part) => {
-      const { data } = await db.from("calendar_events").select("key,source_ids").in("key", part);
-      (data ?? []).forEach((r) => existing.set(r.key, r));
-    });
-
+    const t = today();
+    const { removed } = await storeEvents(sourceId, events, { from: addDaysStr(t, -400), to: addDaysStr(t, 400) });
     const now = new Date().toISOString();
-    const rows = events.map((e) => ({
-      ...e,
-      source_ids: Array.from(new Set([...(existing.get(e.key)?.source_ids ?? []), sourceId])),
-      removed: false,
-      last_seen_at: now,
-      updated_at: now,
-    }));
-    await chunked(rows, 300, async (part) => {
-      const { error: e } = await db.from("calendar_events").upsert(part, { onConflict: "key" });
-      if (e) throw e;
-    });
-
-    // 이번에 안 보인 일정: 이 캘린더를 빼고, 아무 캘린더에도 없으면 '사라짐'
-    const seen = new Set(keys);
-    const gone = (mine ?? []).filter((r) => !seen.has(r.key));
-    await pool(gone, 8, async (r) => {
-      const left = r.source_ids.filter((s: string) => s !== sourceId);
-      await db
-        .from("calendar_events")
-        .update({ source_ids: left, removed: left.length === 0, updated_at: now })
-        .eq("key", r.key);
-    });
-
     await db.from("calendar_sources").update({ last_synced_at: now, last_error: null, event_count: events.length }).eq("id", sourceId);
-    return { ok: true, total, tagged: events.length, removed: gone.length };
+    return { ok: true, total, tagged: events.length, removed };
   } catch (e) {
     const msg = e instanceof Error ? (e.name === "AbortError" ? "캘린더 응답이 너무 느립니다. 잠시 후 다시 시도해 주세요." : e.message) : String(e);
     await db.from("calendar_sources").update({ last_error: msg }).eq("id", sourceId);
@@ -172,4 +191,55 @@ export async function applySync() {
   const result = { ...plan.stats, unmatchedTags: plan.unmatchedTags };
   await db.from("calendar_sync_state").upsert({ id: 1, last_run_at: new Date().toISOString(), last_result: result });
   return result;
+}
+
+export const hashToken = (t: string) => createHash("sha256").update(t, "utf8").digest("hex");
+
+/** Apps Script가 보낸 일정 저장 + 단계 반영 */
+export async function pushFromScript(body: {
+  token?: string;
+  events?: ScriptEvent[];
+  from?: string;
+  to?: string;
+  total?: number;
+  error?: string;
+  calendars?: string[];
+}): Promise<{ status: number; json: Record<string, unknown> }> {
+  const token = typeof body.token === "string" ? body.token.trim() : "";
+  if (!/^[0-9a-f]{64}$/.test(token)) return { status: 401, json: { error: "연결 코드가 없습니다. NPD [캘린더 연동]에서 스크립트를 다시 받아 붙여넣어 주세요." } };
+  const db = supabaseAdmin();
+  const { data: src, error } = await db
+    .from("calendar_sources")
+    .select("id,enabled,kind")
+    .eq("token_hash", hashToken(token))
+    .maybeSingle();
+  if (error) throw error;
+  if (!src || src.kind !== "script")
+    return { status: 401, json: { error: "연결 코드가 맞지 않습니다 (연결을 끊었거나 코드를 새로 받았을 수 있어요). NPD [캘린더 연동]에서 스크립트를 다시 받아 붙여넣어 주세요." } };
+  if (!src.enabled) return { status: 200, json: { ok: false, paused: true, message: "NPD에서 이 캘린더 연결이 일시 중지되어 있어 반영하지 않았습니다." } };
+
+  // 스크립트 쪽 오류 보고
+  if (typeof body.error === "string" && body.error) {
+    await db.from("calendar_sources").update({ last_error: `Apps Script 오류: ${body.error.slice(0, 300)}` }).eq("id", src.id);
+    return { status: 200, json: { ok: true, reported: true } };
+  }
+
+  if (!Array.isArray(body.events)) return { status: 400, json: { error: "events가 없습니다" } };
+  if (body.events.length > 5000) return { status: 400, json: { error: "일정이 너무 많습니다 (최대 5000개)" } };
+
+  const events = fromScript(body.events);
+  const window = isDate(body.from) && isDate(body.to) ? { from: body.from, to: body.to } : undefined;
+  const { removed } = await storeEvents(src.id, events, window);
+  await db
+    .from("calendar_sources")
+    .update({ last_synced_at: new Date().toISOString(), last_error: null, event_count: events.length })
+    .eq("id", src.id);
+
+  let apply: unknown = null;
+  try {
+    apply = await applySync();
+  } catch (e) {
+    apply = { error: e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e) };
+  }
+  return { status: 200, json: { ok: true, total: body.total ?? null, tagged: events.length, removed, apply } };
 }

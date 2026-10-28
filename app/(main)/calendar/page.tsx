@@ -4,14 +4,15 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
-import { Empty, Toast } from "@/components/ui";
+import { Empty, Modal, Toast } from "@/components/ui";
+import { buildAppsScript } from "@/lib/calendar/appsScript";
 import { relativeTime, short } from "@/lib/dates";
 import { normTag } from "@/lib/calendar/text";
 import { runCalendarSync, summaryText, type SyncSummary } from "@/lib/calendar/client";
 import type { CalendarEvent, CalendarSourceInfo, Project } from "@/lib/types";
 
 interface MySource extends CalendarSourceInfo {
-  ics_url: string;
+  ics_url: string | null;
 }
 
 export default function CalendarPage() {
@@ -29,6 +30,9 @@ export default function CalendarPage() {
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [pick, setPick] = useState<Record<string, string>>({});
+  const [mode, setMode] = useState<"script" | "ics">("script");
+  const [script, setScript] = useState<{ id: string; code: string; renew: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const show = (m: string) => {
     setToast(m);
@@ -96,6 +100,32 @@ export default function CalendarPage() {
     setLabel("");
     await load();
     sync([data.id]);
+  }
+
+  async function issueScript(id?: string) {
+    if (id && !confirm("코드를 새로 받으면 지금 Apps Script에 붙여넣은 코드는 더 이상 작동하지 않습니다. 새 코드로 바꿔 붙여넣어야 해요. 계속할까요?")) return;
+    setBusy(true);
+    const { data, error } = await supabase().rpc("calendar_script_issue", { p_label: id ? null : label.trim() || null, p_id: id ?? null });
+    setBusy(false);
+    if (error) {
+      const missing = error.code === "PGRST202" || /calendar_script_issue|kind/.test(error.message);
+      return show(missing ? "DB 업데이트가 필요합니다. 관리자가 supabase/007_calendar_script.sql 을 실행해 주세요." : `실패: ${error.message}`);
+    }
+    const row = (Array.isArray(data) ? data[0] : data) as { id: string; token: string };
+    setScript({ id: row.id, code: buildAppsScript(window.location.origin, row.token), renew: !!id });
+    setCopied(false);
+    setLabel("");
+    load();
+  }
+
+  async function copyScript() {
+    if (!script) return;
+    try {
+      await navigator.clipboard.writeText(script.code);
+      setCopied(true);
+    } catch {
+      show("복사하지 못했습니다. 코드 칸을 클릭하고 Ctrl+A, Ctrl+C 로 복사해 주세요.");
+    }
   }
 
   async function toggle(s: MySource) {
@@ -329,8 +359,25 @@ export default function CalendarPage() {
                 {mine.map((s) => (
                   <li key={s.id} className="space-y-1 px-4 py-3 text-sm">
                     <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${s.last_error ? "bg-rose-500" : s.enabled ? "bg-emerald-500" : "bg-slate-300"}`} />
-                      <span className="flex-1 truncate font-medium">{s.label || "내 캘린더"}</span>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${s.last_error ? "bg-rose-500" : s.enabled ? "bg-emerald-500" : "bg-slate-300"}`} />
+                      <span className="min-w-0 flex-1 truncate font-medium">{s.label || "내 캘린더"}</span>
+                      <span className="shrink-0 rounded bg-slate-100 px-1.5 text-[10px] text-slate-500">{s.kind === "script" ? "Apps Script" : "iCal 주소"}</span>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      말머리 일정 {s.event_count}개 ·{" "}
+                      {s.last_synced_at
+                        ? `${relativeTime(s.last_synced_at)} 동기화`
+                        : s.kind === "script"
+                          ? "아직 받은 일정 없음 — Apps Script에서 setup 을 실행하세요"
+                          : "아직 동기화 전"}
+                    </p>
+                    {s.last_error && <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700">{s.last_error}</p>}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {s.kind === "script" && (
+                        <button className="btn-outline px-2 py-0.5 text-xs" disabled={busy} onClick={() => issueScript(s.id)}>
+                          코드 다시 받기
+                        </button>
+                      )}
                       <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => toggle(s)}>
                         {s.enabled ? "일시 중지" : "다시 켜기"}
                       </button>
@@ -338,39 +385,64 @@ export default function CalendarPage() {
                         연결 끊기
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500">
-                      말머리 일정 {s.event_count}개 · {s.last_synced_at ? `${relativeTime(s.last_synced_at)} 동기화` : "아직 동기화 전"}
-                    </p>
-                    {s.last_error && <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700">{s.last_error}</p>}
                   </li>
                 ))}
               </ul>
             )}
-            <div className="space-y-2 border-t border-black/[0.06] p-4">
-              <details className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600" open={mine.length === 0}>
-                <summary className="cursor-pointer font-medium text-slate-700">비공개 주소 찾는 법</summary>
-                <ol className="mt-2 list-decimal space-y-1 pl-4">
-                  <li>PC에서 구글 캘린더 열기 → 오른쪽 위 ⚙️ → <b>설정</b></li>
-                  <li>왼쪽 &lsquo;내 캘린더의 설정&rsquo;에서 업무 일정이 있는 캘린더 클릭</li>
-                  <li>
-                    아래쪽 <b>캘린더 통합</b> → <b>iCal 형식의 비공개 주소</b> 옆 복사 (공개 주소 아님)
-                  </li>
-                  <li>아래 칸에 붙여넣고 [연결]</li>
-                </ol>
-                <p className="mt-2 text-slate-500">
-                  비공개 주소가 보이지 않으면 회사 관리자가 막아둔 경우입니다. 알려주시면 Apps Script 방식으로 바꿔 드릴게요.
-                </p>
-              </details>
-              <input className="input" placeholder="이름 (예: 민기 업무 캘린더)" value={label} onChange={(e) => setLabel(e.target.value)} />
-              <input
-                className="input font-mono text-xs"
-                placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-              />
-              <button className="btn-primary w-full" disabled={!url.trim() || busy} onClick={addSource}>
-                {busy ? "연결 중…" : "연결"}
-              </button>
+            <div className="space-y-3 border-t border-black/[0.06] p-4">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 text-xs">
+                {(
+                  [
+                    ["script", "Apps Script (회사 계정)"],
+                    ["ics", "iCal 비공개 주소"],
+                  ] as const
+                ).map(([k, t]) => (
+                  <button
+                    key={k}
+                    className={`rounded-md px-2 py-1.5 ${mode === k ? "bg-white font-medium text-ink shadow-sm" : "text-slate-500 hover:text-ink"}`}
+                    onClick={() => setMode(k)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+
+              {mode === "script" ? (
+                <>
+                  <p className="text-xs text-slate-600">
+                    회사 계정이라 &lsquo;iCal 비공개 주소&rsquo;가 안 보이면 이 방법을 쓰세요. 내 구글 계정에 작은 스크립트를 한 번 설치하면, <b>[말머리] 일정만</b> 30분마다 NPD로 보냅니다.
+                  </p>
+                  <input className="input" placeholder="이름 (예: 민기 업무 캘린더)" value={label} onChange={(e) => setLabel(e.target.value)} />
+                  <button className="btn-primary w-full" disabled={busy} onClick={() => issueScript()}>
+                    {busy ? "만드는 중…" : "내 연결 스크립트 만들기"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <details className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600" open={mine.length === 0}>
+                    <summary className="cursor-pointer font-medium text-slate-700">비공개 주소 찾는 법</summary>
+                    <ol className="mt-2 list-decimal space-y-1 pl-4">
+                      <li>PC에서 구글 캘린더 열기 → 오른쪽 위 ⚙️ → <b>설정</b></li>
+                      <li>왼쪽 &lsquo;내 캘린더의 설정&rsquo;에서 업무 일정이 있는 캘린더 클릭</li>
+                      <li>
+                        아래쪽 <b>캘린더 통합</b> → <b>iCal 형식의 비공개 주소</b> 옆 복사 (공개 주소 아님)
+                      </li>
+                      <li>아래 칸에 붙여넣고 [연결]</li>
+                    </ol>
+                    <p className="mt-2 text-slate-500">비공개 주소 항목이 없으면 회사에서 막아둔 것입니다. 왼쪽 &lsquo;Apps Script&rsquo; 방식을 쓰세요.</p>
+                  </details>
+                  <input className="input" placeholder="이름 (예: 민기 업무 캘린더)" value={label} onChange={(e) => setLabel(e.target.value)} />
+                  <input
+                    className="input font-mono text-xs"
+                    placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                  />
+                  <button className="btn-primary w-full" disabled={!url.trim() || busy} onClick={addSource}>
+                    {busy ? "연결 중…" : "연결"}
+                  </button>
+                </>
+              )}
             </div>
           </section>
 
@@ -378,7 +450,7 @@ export default function CalendarPage() {
           <section className="card overflow-hidden">
             <div className="border-b border-black/[0.06] px-4 py-3">
               <h2 className="text-sm font-semibold">연결된 캘린더 ({all.length})</h2>
-              <p className="text-xs text-slate-500">자동 동기화는 매시 정각에 실행됩니다.</p>
+              <p className="text-xs text-slate-500">Apps Script 연결은 30분마다, iCal 주소 연결은 매시 정각에 자동 동기화됩니다.</p>
             </div>
             {all.length === 0 ? (
               <div className="p-4">
@@ -410,6 +482,52 @@ export default function CalendarPage() {
           </section>
         </div>
       </div>
+      <Modal open={!!script} onClose={() => setScript(null)} title={script?.renew ? "새 연결 스크립트" : "내 연결 스크립트 설치하기"} width="max-w-3xl">
+        {script && (
+          <div className="space-y-4 p-5 text-sm">
+            <ol className="list-decimal space-y-1.5 pl-5 text-slate-700">
+              <li>
+                아래 <b>[코드 복사]</b>를 누릅니다.
+              </li>
+              <li>
+                회사 구글 계정으로{" "}
+                <a href="https://script.google.com/home/projects/create" target="_blank" rel="noreferrer" className="font-medium text-brand-600 underline">
+                  script.google.com 새 프로젝트
+                </a>
+                를 엽니다.{script.renew && " (이미 설치했다면 그 프로젝트를 엽니다)"}
+              </li>
+              <li>
+                편집기의 기존 내용을 모두 지우고 붙여넣은 뒤 <b>💾 저장</b>합니다. 프로젝트 이름은 &lsquo;NPD 캘린더 연동&rsquo; 등 자유롭게.
+              </li>
+              <li>
+                위쪽 함수 목록에서 <code className="rounded bg-slate-100 px-1">setup</code>을 고르고 <b>▶ 실행</b>합니다.
+              </li>
+              <li>
+                <b>권한 검토</b> → 내 계정 선택 → 허용. (&lsquo;확인되지 않은 앱&rsquo; 화면이 나오면 <b>고급 → 이동</b>을 누르세요. 내가 만든 스크립트라 괜찮습니다.)
+              </li>
+              <li>
+                아래 실행 로그에 <b>&lsquo;설치 완료&rsquo;</b>가 나오면 끝입니다. 이 화면을 새로고침하면 동기화 시각이 보입니다.
+              </li>
+            </ol>
+            <div className="relative">
+              <textarea
+                readOnly
+                className="input h-56 font-mono text-[11px] leading-relaxed"
+                value={script.code}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-primary" onClick={copyScript}>
+                {copied ? "✓ 복사됨" : "코드 복사"}
+              </button>
+              <span className="text-xs text-slate-500">
+                코드 안에 내 연결 코드가 들어 있어요. 다른 사람과 공유하지 마세요. 이 창을 닫은 뒤 다시 필요하면 [코드 다시 받기]를 누르세요.
+              </span>
+            </div>
+          </div>
+        )}
+      </Modal>
       <Toast msg={toast} />
     </div>
   );

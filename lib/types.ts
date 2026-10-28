@@ -151,6 +151,8 @@ export interface CalendarSourceInfo {
   id: string;
   owner_id: string;
   label: string | null;
+  /** ics: 비공개 주소 / script: Apps Script (007 업데이트 전에는 없음) */
+  kind?: "ics" | "script";
   enabled: boolean;
   last_synced_at: string | null;
   last_error: string | null;
