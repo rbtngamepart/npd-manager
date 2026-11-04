@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
-import { Gantt } from "@/components/Gantt";
+import { Gantt, type GroupAction } from "@/components/Gantt";
 import { StagePanel } from "@/components/StagePanel";
 import { ProgressTable } from "@/components/ProgressTable";
 import { ImportDialog } from "@/components/ImportDialog";
@@ -18,7 +18,12 @@ import { useTourEvents } from "@/components/Tour";
 import { collectDepartments, deptRole, deptWithRole, matchesDepts } from "@/lib/departments";
 import { ProjectFilter } from "@/components/ProjectFilter";
 import { makeDeptColor } from "@/lib/deptColors";
-import type { CalendarEvent, Light, LogKind, Project, ProjectMember, Stage, StageLog } from "@/lib/types";
+import type { CalendarEvent, Light, LogKind, Project, ProjectMember, Stage, StageCheck, StageDep, StageGroup, StageLink, StageLog } from "@/lib/types";
+import { buildRows, descendantGroupIds, groupOptions, groupPath, moveWithinParent, nextOrder } from "@/lib/groups";
+import { planShift, type ShiftItem, type ShiftMode } from "@/lib/deps";
+import { RichView, htmlToText } from "@/components/RichText";
+import { KIND } from "@/components/StagePanel";
+import { LabelChip } from "@/components/Labels";
 import { runCalendarSync, summaryText } from "@/lib/calendar/client";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -27,7 +32,7 @@ function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
   const router = useRouter();
-  const { me, profiles, profileById, deptNames } = useApp();
+  const { me, profiles, profileById, deptNames, labels } = useApp();
   const today = todayFn();
 
   const [project, setProject] = useState<Project | null>(null);
@@ -36,6 +41,17 @@ function ProjectPage() {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [calEvents, setCalEvents] = useState<CalendarEvent[] | null>(null); // null = 006 업데이트 전
   const [calSyncing, setCalSyncing] = useState(false);
+  // 008 업데이트 후 (전이면 null)
+  const [groups, setGroups] = useState<StageGroup[] | null>(null);
+  const [checks, setChecks] = useState<StageCheck[] | null>(null);
+  const [links, setLinks] = useState<StageLink[] | null>(null);
+  const [deps, setDeps] = useState<StageDep[] | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [labelFilter, setLabelFilter] = useState<string[]>([]);
+  const [groupFilter, setGroupFilter] = useState<string[]>([]);
+  const [logKinds, setLogKinds] = useState<string[]>([]);
+  const [logQ, setLogQ] = useState("");
+  const [shift, setShift] = useState<{ root: Stage; delay: number; items: ShiftItem[]; mode: ShiftMode; before: Stage; after: Stage; skip: Set<string> } | null>(null);
   const [deptFilter, setDeptFilter] = useState<string[]>([]);
   const toggleDept = (d: string) => setDeptFilter((f) => (f.includes(d) ? f.filter((x) => x !== d) : [...f, d]));
   const [colorBy, setColorByState] = useState<"dept" | "status">("dept");
@@ -93,8 +109,18 @@ function ProjectPage() {
     setStages((s.data ?? []) as Stage[]);
     setLogs((l.data ?? []) as StageLog[]);
     setMembers((m.data ?? []) as ProjectMember[]);
-    const ce = await sb.from("calendar_events").select("*").eq("project_id", id);
+    const [ce, g, c, lk, d] = await Promise.all([
+      sb.from("calendar_events").select("*").eq("project_id", id),
+      sb.from("stage_groups").select("*").eq("project_id", id).order("sort_order"),
+      sb.from("stage_checks").select("*").eq("project_id", id).order("sort_order").order("created_at"),
+      sb.from("stage_links").select("*").eq("project_id", id).order("sort_order").order("created_at"),
+      sb.from("stage_deps").select("*").eq("project_id", id),
+    ]);
     setCalEvents(ce.error ? null : ((ce.data ?? []) as CalendarEvent[]));
+    setGroups(g.error ? null : ((g.data ?? []) as StageGroup[]));
+    setChecks(c.error ? null : ((c.data ?? []) as StageCheck[]));
+    setLinks(lk.error ? null : ((lk.data ?? []) as StageLink[]));
+    setDeps(d.error ? null : ((d.data ?? []) as StageDep[]));
     setLoading(false);
   }, [id]);
 
@@ -112,6 +138,10 @@ function ProjectPage() {
       .on("postgres_changes", { event: "*", schema: "public", table: "stages", filter: `project_id=eq.${id}` }, debounced)
       .on("postgres_changes", { event: "*", schema: "public", table: "stage_logs", filter: `project_id=eq.${id}` }, debounced)
       .on("postgres_changes", { event: "*", schema: "public", table: "projects", filter: `id=eq.${id}` }, debounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "stage_groups", filter: `project_id=eq.${id}` }, debounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "stage_checks", filter: `project_id=eq.${id}` }, debounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "stage_links", filter: `project_id=eq.${id}` }, debounced)
+      .on("postgres_changes", { event: "*", schema: "public", table: "stage_deps", filter: `project_id=eq.${id}` }, debounced)
       .subscribe();
     window.addEventListener("focus", load);
     window.addEventListener("npd-calendar-synced", load);
@@ -123,6 +153,40 @@ function ProjectPage() {
   }, [id, load]);
 
   const canEdit = !!me && (me.is_game_part || members.some((m) => m.user_id === me.id));
+
+  // 접은 그룹 기억 (프로젝트별, 내 브라우저에만)
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(`npd-collapsed-${id}`);
+      if (v) setCollapsed(new Set(JSON.parse(v)));
+    } catch {
+      /* 무시 */
+    }
+  }, [id]);
+  const toggleGroup = (gid: string) =>
+    setCollapsed((c) => {
+      const n = new Set(c);
+      if (n.has(gid)) n.delete(gid);
+      else n.add(gid);
+      try {
+        localStorage.setItem(`npd-collapsed-${id}`, JSON.stringify(Array.from(n)));
+      } catch {
+        /* 무시 */
+      }
+      return n;
+    });
+
+  const copy = useCallback(
+    async (text: string, msg: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast(msg);
+      } catch {
+        prompt("복사해서 쓰세요", text);
+      }
+    },
+    [toast]
+  );
 
   // 튜토리얼에서 오는 동작
   useTourEvents((e) => {
@@ -142,17 +206,48 @@ function ProjectPage() {
 
   // ---- 단계 조작 -------------------------------------------------------
   async function updateStage(sid: string, patch: Partial<Stage>) {
+    const before = stages.find((s) => s.id === sid);
     setStages((ss) => ss.map((s) => (s.id === sid ? { ...s, ...patch } : s)));
     const { error } = await supabase().from("stages").update(patch).eq("id", sid);
     if (error) toast(`저장 실패: ${error.message}`);
+    // 늦어졌으면 연결된 뒤 단계도 함께 미룰지 확인
+    if (!error && before && deps?.length) {
+      const after = { ...before, ...patch };
+      const r = planShift(stages, deps, before, after, "keep");
+      if (r.items.length) setShift({ root: after, delay: r.delay, items: r.items, mode: "keep", before, after, skip: new Set(r.items.filter((i) => i.locked).map((i) => i.stage.id)) });
+    }
     await load();
   }
 
-  async function addStage() {
-    const order = stages.reduce((m, s) => Math.max(m, s.sort_order), -1) + 1;
+  function changeShiftMode(mode: ShiftMode) {
+    if (!shift || !deps) return;
+    const r = planShift(stages, deps, shift.before, shift.after, mode);
+    setShift({ ...shift, mode, items: r.items, skip: new Set(r.items.filter((i) => i.locked).map((i) => i.stage.id)) });
+  }
+
+  async function applyShift() {
+    if (!shift) return;
+    const sb = supabase();
+    const todo = shift.items.filter((i) => !shift.skip.has(i.stage.id));
+    setShift(null);
+    const res = await Promise.all(
+      todo.map((i) =>
+        sb
+          .from("stages")
+          .update({ plan_start: i.plan_start, plan_end: i.plan_end, ...(i.stage.expected_end ? { expected_end: i.expected_end } : {}) })
+          .eq("id", i.stage.id)
+      )
+    );
+    const failed = res.filter((r) => r.error).length;
+    toast(failed ? `${todo.length - failed}개 미룸, ${failed}개 실패` : `뒤 단계 ${todo.length}개를 함께 미뤘습니다`);
+    load();
+  }
+
+  async function addStage(groupId: string | null = null) {
+    const order = groups ? nextOrder(groupId, stages, groups) : stages.reduce((m, s) => Math.max(m, s.sort_order), -1) + 1;
     const { data, error } = await supabase()
       .from("stages")
-      .insert({ project_id: id, name: "새 단계", department: me?.department ?? "게임파트", sort_order: order })
+      .insert({ project_id: id, name: "새 단계", department: me?.department ?? "게임파트", sort_order: order, ...(groupId ? { group_id: groupId } : {}) })
       .select()
       .single();
     if (error) return toast(error.message);
@@ -169,7 +264,56 @@ function ProjectPage() {
     load();
   }
 
+  async function applyOrder(r: ReturnType<typeof moveWithinParent>) {
+    if (!r) return;
+    const sb = supabase();
+    setStages((ss) => ss.map((s) => ({ ...s, sort_order: r.stages.find((x) => x.id === s.id)?.sort_order ?? s.sort_order })));
+    setGroups((gs) => gs && gs.map((g) => ({ ...g, sort_order: r.groups.find((x) => x.id === g.id)?.sort_order ?? g.sort_order })));
+    await Promise.all([
+      ...r.stages.map((x) => sb.from("stages").update({ sort_order: x.sort_order }).eq("id", x.id)),
+      ...r.groups.map((x) => sb.from("stage_groups").update({ sort_order: x.sort_order }).eq("id", x.id)),
+    ]);
+    load();
+  }
+
+  async function groupAction(g: StageGroup, a: GroupAction) {
+    if (!groups) return;
+    const sb = supabase();
+    if (a === "stage") return addStage(g.id);
+    if (a === "up" || a === "down") return applyOrder(moveWithinParent({ kind: "group", id: g.id }, a === "up" ? -1 : 1, stages, groups));
+    if (a === "rename") {
+      const name = prompt("그룹 이름", g.name)?.trim();
+      if (name && name !== g.name) await sb.from("stage_groups").update({ name }).eq("id", g.id);
+      return load();
+    }
+    if (a === "sub") return addGroup(g.id);
+    if (a === "delete") {
+      const inside = stages.filter((s) => s.group_id === g.id).length + groups.filter((x) => x.parent_id === g.id).length;
+      if (!confirm(`'${g.name}' 그룹을 지울까요?${inside ? `\n안에 있던 ${inside}개 항목은 ${g.parent_id ? "위 그룹으로" : "맨 위로"} 옮겨집니다.` : ""}`)) return;
+      await Promise.all([
+        sb.from("stages").update({ group_id: g.parent_id }).eq("group_id", g.id),
+        sb.from("stage_groups").update({ parent_id: g.parent_id }).eq("parent_id", g.id),
+      ]);
+      await sb.from("stage_groups").delete().eq("id", g.id);
+      toast("그룹을 지웠습니다");
+      return load();
+    }
+  }
+
+  async function addGroup(parentId: string | null = null) {
+    if (!groups) return;
+    const name = prompt(parentId ? "하위 그룹 이름" : "그룹 이름 (예: 기획, 개발·생산, 마케팅)")?.trim();
+    if (!name) return;
+    const { error } = await supabase()
+      .from("stage_groups")
+      .insert({ project_id: id, parent_id: parentId, name, sort_order: nextOrder(parentId, stages, groups) });
+    if (error) return toast(error.message);
+    if (parentId && collapsed.has(parentId)) toggleGroup(parentId);
+    load();
+  }
+
   async function moveStage(sid: string, dir: -1 | 1) {
+    if (groups && groups.length) return applyOrder(moveWithinParent({ kind: "stage", id: sid }, dir, stages, groups));
     const i = stages.findIndex((s) => s.id === sid);
     const j = i + dir;
     if (i < 0 || j < 0 || j >= stages.length) return;
@@ -180,12 +324,19 @@ function ProjectPage() {
     await Promise.all(next.map((s, k) => (s.sort_order !== k ? sb.from("stages").update({ sort_order: k }).eq("id", s.id) : null)));
   }
 
-  async function addLog(sid: string, kind: LogKind, body: string) {
+  async function addLog(sid: string, kind: LogKind, body: string, html: string | null = null) {
     const s = stages.find((x) => x.id === sid);
     const { error } = await supabase()
       .from("stage_logs")
-      .insert({ project_id: id, stage_id: sid, stage_name: s?.name, kind, body, author_id: me?.id });
+      .insert({ project_id: id, stage_id: sid, stage_name: s?.name, kind, body, author_id: me?.id, ...(html ? { body_html: html } : {}) });
     if (error) return toast(error.message);
+    load();
+  }
+
+  async function updateLog(lid: string, body: string, html: string) {
+    setLogs((ls) => ls.map((l) => (l.id === lid ? { ...l, body, body_html: html } : l)));
+    const { error } = await supabase().from("stage_logs").update({ body, body_html: html, edited_at: new Date().toISOString() }).eq("id", lid);
+    if (error) toast(`저장 실패: ${error.message}`);
     load();
   }
 
@@ -266,7 +417,36 @@ function ProjectPage() {
   const departments = deptNames;
   const projectDepts = collectDepartments(stages, [], deptNames).filter((d) => stages.some((s) => deptRole(s, d)));
   const colorOf = makeDeptColor(deptNames);
-  const filtered = stages.filter((s) => matchesDepts(s, deptFilter));
+  const labelById = Object.fromEntries((labels ?? []).map((l) => [l.id, l]));
+  const groupIds = groupFilter.length && groups ? new Set(groupFilter.flatMap((g) => Array.from(descendantGroupIds(g, groups)))) : null;
+  const filtered = stages.filter(
+    (s) =>
+      matchesDepts(s, deptFilter) &&
+      (!labelFilter.length || (s.label_ids ?? []).some((l) => labelFilter.includes(l))) &&
+      (!groupIds || (!!s.group_id && groupIds.has(s.group_id)))
+  );
+  const useTree = !!groups && groups.length > 0 && !groupDept;
+  const rows = useTree ? buildRows(stages, groups!, new Set(filtered.map((s) => s.id)), collapsed, !deptFilter.length && !labelFilter.length && !groupIds) : undefined;
+  const checkCount: Record<string, { done: number; total: number }> = {};
+  (checks ?? []).forEach((c) => {
+    const x = (checkCount[c.stage_id] ??= { done: 0, total: 0 });
+    x.total++;
+    if (c.done) x.done++;
+  });
+  const usedLabels = (labels ?? []).filter((l) => stages.some((s) => (s.label_ids ?? []).includes(l.id)));
+  const stageById = new Map(stages.map((s) => [s.id, s]));
+  const shownLogs = logs.filter((l) => {
+    const st = l.stage_id ? stageById.get(l.stage_id) : undefined;
+    if (logKinds.length) {
+      const k = l.source ?? l.kind;
+      if (!logKinds.includes(k)) return false;
+    }
+    if (labelFilter.length && !(st?.label_ids ?? []).some((x) => labelFilter.includes(x))) return false;
+    if (groupIds && !(st?.group_id && groupIds.has(st.group_id))) return false;
+    if (deptFilter.length && !(st && matchesDepts(st, deptFilter))) return false;
+    if (logQ.trim() && !`${l.body} ${l.stage_name ?? ""} ${l.ext_title ?? ""}`.toLowerCase().includes(logQ.trim().toLowerCase())) return false;
+    return true;
+  });
   const deptOrder = (d: string | null) => (d ? (projectDepts.indexOf(d) + 1 || 999) : 1000);
   const shown = groupDept
     ? filtered.slice().sort((a, b) => deptOrder(a.department) - deptOrder(b.department) || a.sort_order - b.sort_order)
@@ -365,7 +545,43 @@ function ProjectPage() {
             ))}
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
-            {(tab === "gantt" || tab === "pm") && projectDepts.length > 1 && (
+            {tab !== "settings" && groups && groups.length > 0 && (
+              <ProjectFilter
+                title="그룹"
+                placeholder="그룹 검색"
+                unit="단계"
+                align="right"
+                options={groupOptions(groups).map((g) => {
+                  const ids = descendantGroupIds(g.id, groups);
+                  return {
+                    id: g.id,
+                    name: `${"\u00a0\u00a0".repeat(g.depth)}${g.depth ? "└ " : ""}${g.name}`,
+                    category: g.depth ? groupPath(g.id, groups) : null,
+                    count: stages.filter((s) => s.group_id && ids.has(s.group_id)).length,
+                  };
+                })}
+                value={groupFilter}
+                onChange={setGroupFilter}
+              />
+            )}
+            {tab !== "settings" && usedLabels.length > 0 && (
+              <ProjectFilter
+                title="업무 속성"
+                placeholder="라벨 검색"
+                unit="단계"
+                align="right"
+                options={usedLabels.map((l) => ({
+                  id: l.id,
+                  name: l.name,
+                  category: null,
+                  dot: l.color ?? "#64748b",
+                  count: stages.filter((s) => (s.label_ids ?? []).includes(l.id)).length,
+                }))}
+                value={labelFilter}
+                onChange={setLabelFilter}
+              />
+            )}
+            {tab !== "settings" && projectDepts.length > 1 && (
               <div data-tour="dept-filter" className="mr-1">
                 <ProjectFilter
                   title="부서"
@@ -446,7 +662,12 @@ function ProjectPage() {
                 <button className="btn-outline py-1 text-xs" onClick={() => setImportOpen(true)} data-tour="import-btn">
                   시트에서 가져오기
                 </button>
-                <button className="btn-primary py-1 text-xs" onClick={addStage} data-tour="add-stage">
+                {groups && tab === "gantt" && (
+                  <button className="btn-outline py-1 text-xs" onClick={() => addGroup(null)} data-tour="add-group" title="단계를 묶는 상위 분류 (그룹 안에 그룹도 가능)">
+                    + 그룹
+                  </button>
+                )}
+                <button className="btn-primary py-1 text-xs" onClick={() => addStage(null)} data-tour="add-stage">
                   + 단계
                 </button>
               </>
@@ -497,7 +718,16 @@ function ProjectPage() {
                 selectedId={selected}
                 onSelect={setSelected}
                 onDates={(sid, start, end) => updateStage(sid, { plan_start: start, plan_end: end })}
+                rows={rows}
+                onToggleGroup={toggleGroup}
+                onGroupAction={groupAction}
+                deps={deps}
+                checkCount={checkCount}
+                labelById={labelById}
               />
+              {useTree && groupDept === false && (deptFilter.length > 0 || labelFilter.length > 0 || !!groupIds) && (
+                <p className="border-t border-black/[0.06] px-4 py-1.5 text-[11px] text-slate-500">필터에 맞는 단계가 있는 그룹만 보입니다.</p>
+              )}
               {projectDepts.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 border-t border-black/[0.06] px-4 py-2 text-xs" data-tour="dept-legend">
                   <span className="mr-1 text-[11px] text-slate-500">부서</span>
@@ -571,28 +801,89 @@ function ProjectPage() {
         )}
 
         {tab === "logs" && (
-          <div className="p-5">
-            {logs.length === 0 ? (
-              <Empty>아직 기록이 없습니다.</Empty>
+          <div className="space-y-4 p-5">
+            <div className="flex flex-wrap items-center gap-1.5" data-tour="log-filter">
+              {(
+                [
+                  ["memo", "메모"],
+                  ["issue", "이슈"],
+                  ["decision", "결정"],
+                  ["change", "변경"],
+                  ...(logs.some((l) => l.source === "jira") ? [["jira", "Jira"]] : []),
+                  ...(logs.some((l) => l.source === "confluence") ? [["confluence", "Confluence"]] : []),
+                ] as [string, string][]
+              ).map(([k, l]) => {
+                const on = logKinds.includes(k);
+                const n = logs.filter((x) => (x.source ?? x.kind) === k).length;
+                return (
+                  <button
+                    key={k}
+                    onClick={() => setLogKinds((v) => (on ? v.filter((x) => x !== k) : [...v, k]))}
+                    className={`rounded-full px-2.5 py-0.5 text-xs ring-1 ring-inset ${on ? "bg-ink text-white ring-ink" : "text-slate-600 ring-black/10 hover:bg-slate-50"}`}
+                  >
+                    {l} <span className="opacity-60">{n}</span>
+                  </button>
+                );
+              })}
+              <input className="input ml-auto w-56 py-1 text-xs" placeholder="기록 검색" value={logQ} onChange={(e) => setLogQ(e.target.value)} />
+            </div>
+            {(logKinds.length > 0 || groupFilter.length > 0 || labelFilter.length > 0 || deptFilter.length > 0 || logQ) && (
+              <p className="text-xs text-slate-500">
+                {shownLogs.length}건 / 전체 {logs.length}건{" "}
+                <button
+                  className="ml-1 underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setLogKinds([]);
+                    setGroupFilter([]);
+                    setLabelFilter([]);
+                    setDeptFilter([]);
+                    setLogQ("");
+                  }}
+                >
+                  필터 해제
+                </button>
+              </p>
+            )}
+            {shownLogs.length === 0 ? (
+              <Empty>{logs.length ? "조건에 맞는 기록이 없습니다." : "아직 기록이 없습니다."}</Empty>
             ) : (
               <ol className="relative space-y-4 border-l border-black/[0.08] pl-5">
-                {logs.map((l) => (
-                  <li key={l.id} className="relative">
-                    <span
-                      className={`absolute -left-[25px] top-1.5 h-2 w-2 rounded-full ${
-                        l.kind === "issue" ? "bg-rose-500" : l.kind === "decision" ? "bg-violet-500" : l.kind === "change" ? "bg-sky-400" : "bg-slate-400"
-                      }`}
-                    />
-                    <div className="text-xs text-slate-400">
-                      <button className="font-medium text-slate-600 hover:underline" onClick={() => l.stage_id && setSelected(l.stage_id)}>
-                        {l.stage_name ?? "(삭제된 단계)"}
-                      </button>{" "}
-                      · {l.author_id ? displayName(profileById[l.author_id]) : "시스템"} ·{" "}
-                      {new Date(l.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    </div>
-                    <p className={`mt-0.5 whitespace-pre-wrap text-sm ${l.kind === "change" ? "text-slate-500" : ""}`}>{l.body}</p>
-                  </li>
-                ))}
+                {shownLogs.map((l) => {
+                  const st = l.stage_id ? stageById.get(l.stage_id) : undefined;
+                  const path = st?.group_id && groups ? groupPath(st.group_id, groups) : "";
+                  return (
+                    <li key={l.id} className="relative">
+                      <span
+                        className={`absolute -left-[25px] top-1.5 h-2 w-2 rounded-full ${
+                          l.kind === "issue" ? "bg-rose-500" : l.kind === "decision" ? "bg-violet-500" : l.kind === "change" ? "bg-sky-400" : "bg-slate-400"
+                        }`}
+                      />
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-400">
+                        <span className={`rounded px-1.5 py-px text-[11px] ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
+                        {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-[11px] text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
+                        {path && <span className="text-slate-400">{path} ›</span>}
+                        <button className="font-medium text-slate-600 hover:underline" onClick={() => l.stage_id && setSelected(l.stage_id)}>
+                          {st?.name ?? l.stage_name ?? "(삭제된 단계)"}
+                        </button>
+                        {(st?.label_ids ?? []).map((lid) => (labelById[lid] ? <LabelChip key={lid} label={labelById[lid]} small /> : null))}
+                        <span>
+                          · {l.source ? "자동 수집" : l.author_id ? displayName(profileById[l.author_id]) : "시스템"} ·{" "}
+                          {new Date(l.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {l.edited_at && " (수정됨)"}
+                        </span>
+                      </div>
+                      {l.body_html ? (
+                        <RichView
+                          html={l.body_html}
+                          className="mt-0.5"
+                          onChange={canEdit && l.kind !== "change" && !l.source ? (html) => updateLog(l.id, htmlToText(html), html) : undefined}
+                        />
+                      ) : (
+                        <p className={`mt-0.5 whitespace-pre-wrap text-sm ${l.kind === "change" ? "text-slate-500" : ""}`}>{l.body}</p>
+                      )}
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </div>
@@ -628,17 +919,102 @@ function ProjectPage() {
           departments={departments}
           colorOf={colorOf}
           calEvents={(calEvents ?? []).filter((e) => e.stage_id === sel.id)}
+          stages={stages}
+          groups={groups}
+          checks={checks && checks.filter((c) => c.stage_id === sel.id)}
+          links={links && links.filter((x) => x.stage_id === sel.id)}
+          deps={deps}
+          onUpdateLog={updateLog}
+          onChanged={load}
+          onOpenStage={setSelected}
+          onCopy={copy}
           onSave={async (patch) => {
             await updateStage(sel.id, patch);
             toast("저장했습니다");
           }}
           onDelete={() => deleteStage(sel.id)}
           onMove={(d) => moveStage(sel.id, d)}
-          onAddLog={(k, b) => addLog(sel.id, k, b)}
+          onAddLog={(k, b, h) => addLog(sel.id, k, b, h)}
           onDeleteLog={deleteLog}
           onClose={() => setSelected(null)}
         />
       )}
+
+      <Modal open={!!shift} onClose={() => setShift(null)} title="연결된 뒤 단계도 함께 미룰까요?" width="max-w-2xl">
+        {shift && (
+          <div className="space-y-3 text-sm" data-tour="shift-modal">
+            <p>
+              <b>{shift.root.name}</b>이(가) <b className="text-rose-600">{shift.delay}일</b> 늦어졌습니다. 이 단계 뒤에 연결된 단계들입니다.
+            </p>
+            <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
+              {(
+                [
+                  ["keep", `간격 유지 (모두 ${shift.delay}일)`],
+                  ["needed", "겹치는 단계만 필요한 만큼"],
+                ] as const
+              ).map(([k, l]) => (
+                <button
+                  key={k}
+                  onClick={() => changeShiftMode(k)}
+                  className={`rounded-md px-2.5 py-1 ${shift.mode === k ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+            {shift.items.length === 0 ? (
+              <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">여유가 있어서 겹치는 뒤 단계가 없습니다. 그대로 두셔도 됩니다.</p>
+            ) : (
+              <ul className="divide-y divide-black/[0.05] rounded-lg border border-black/10">
+                {shift.items.map((i) => {
+                  const on = !shift.skip.has(i.stage.id);
+                  return (
+                    <li key={i.stage.id} className={`flex items-center gap-2 px-3 py-2 ${on ? "" : "opacity-50"}`}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={i.locked}
+                        onChange={() =>
+                          setShift((sh) => {
+                            if (!sh) return sh;
+                            const n = new Set(sh.skip);
+                            if (n.has(i.stage.id)) n.delete(i.stage.id);
+                            else n.add(i.stage.id);
+                            return { ...sh, skip: n };
+                          })
+                        }
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{i.stage.name}</span>
+                        <span className="block text-[11px] text-slate-400">
+                          {i.via && `${i.via} 다음`}
+                          {i.locked && " · 📅 구글 캘린더 일정을 따르는 단계라 캘린더에서 옮겨야 합니다"}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                        {short(i.stage.plan_start)}~{short(i.stage.plan_end)}
+                      </span>
+                      <span className="shrink-0 text-slate-300">→</span>
+                      <span className="shrink-0 text-xs font-medium tabular-nums">
+                        {short(i.plan_start)}~{short(i.plan_end)}
+                      </span>
+                      <span className="w-10 shrink-0 text-right text-xs text-rose-600">+{i.days}일</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setShift(null)}>
+                그대로 두기
+              </button>
+              <button className="btn-primary" disabled={!shift.items.some((i) => !shift.skip.has(i.stage.id))} onClick={applyShift}>
+                {shift.items.filter((i) => !shift.skip.has(i.stage.id)).length}개 함께 미루기
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <ImportDialog
         open={importOpen}

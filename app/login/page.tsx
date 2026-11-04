@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -9,6 +9,14 @@ export default function LoginPage() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const google = process.env.NEXT_PUBLIC_ENABLE_GOOGLE === "true";
+
+  // 로그인 후 돌아갈 곳 (로그인 화면으로 오기 전에 열려던 주소)
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search).get("next");
+    if (next && next.startsWith("/") && !next.startsWith("//")) {
+      document.cookie = `npd-next=${encodeURIComponent(next)}; path=/; max-age=900; samesite=lax`;
+    }
+  }, []);
 
   async function sendLink(e: React.FormEvent) {
     e.preventDefault();

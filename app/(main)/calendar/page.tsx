@@ -484,7 +484,7 @@ export default function CalendarPage() {
       </div>
       <Modal open={!!script} onClose={() => setScript(null)} title={script?.renew ? "새 연결 스크립트" : "내 연결 스크립트 설치하기"} width="max-w-3xl">
         {script && (
-          <div className="space-y-4 p-5 text-sm">
+          <div className="space-y-4 text-sm">
             <ol className="list-decimal space-y-1.5 pl-5 text-slate-700">
               <li>
                 아래 <b>[코드 복사]</b>를 누릅니다.

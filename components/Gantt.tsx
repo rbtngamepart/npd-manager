@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, diffDays, maxDate, minDate, monthStart, nextMonth, short, weekNumber } from "@/lib/dates";
 import { STATUS_META, stageFinalStatus } from "@/lib/status";
-import type { Stage } from "@/lib/types";
+import type { Stage, StageDep, StageGroup, StageLabel } from "@/lib/types";
+import { groupSpan, type Row } from "@/lib/groups";
+import { effectiveEnd } from "@/lib/deps";
 import { StatusDot } from "./ui";
 import { roleLabel, rolesFor, toList } from "@/lib/departments";
 import type { DeptColorFn } from "@/lib/deptColors";
@@ -24,7 +26,11 @@ interface Drag {
 }
 
 const ROW = 44;
+const GROUP_ROW = 32;
+const DEPT_ROW = 26;
 const LEFT = 280;
+
+export type GroupAction = "rename" | "sub" | "stage" | "up" | "down" | "delete";
 
 export function Gantt({
   stages,
@@ -40,6 +46,12 @@ export function Gantt({
   colorOf,
   colorBy = "status",
   groupByDept = false,
+  rows,
+  onToggleGroup,
+  onGroupAction,
+  deps,
+  checkCount,
+  labelById,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -59,7 +71,23 @@ export function Gantt({
   colorBy?: "status" | "dept";
   /** 담당부서가 바뀌는 곳에 구분 줄 표시 (stages는 미리 부서순 정렬해서 전달) */
   groupByDept?: boolean;
+  /** 그룹 트리로 그릴 때 (stages 대신 이 순서대로) */
+  rows?: Row[];
+  onToggleGroup?: (id: string) => void;
+  onGroupAction?: (g: StageGroup, a: GroupAction) => void;
+  /** 선후 관계 화살표 */
+  deps?: StageDep[] | null;
+  /** 체크리스트 진행 */
+  checkCount?: Record<string, { done: number; total: number }>;
+  labelById?: Record<string, StageLabel>;
 }) {
+  const [menu, setMenu] = useState<string | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [menu]);
   const ppd = scale === "week" ? 6 : 3.2; // px per day
   const scroller = useRef<HTMLDivElement>(null);
   const [boxW, setBoxW] = useState(1200);
@@ -197,6 +225,48 @@ export function Gantt({
   const firstBarId = (planned.find((s) => !s.actual_end && s.plan_end! >= today) ?? planned.find((s) => !s.actual_end) ?? planned[0])?.id;
   const todayX = today >= rangeStart && today <= rangeEnd ? x(today) + ppd / 2 : null;
 
+  // 그릴 줄 목록 + 각 줄의 세로 위치 (선후 관계 화살표용)
+  const items: Row[] = rows ?? stages.map((s, i) => ({ kind: "stage" as const, stage: s, depth: 0, no: i + 1 }));
+  const headH = scale === "week" ? 52 : 36;
+  const rowY = new Map<string, number>();
+  {
+    let y = headH;
+    items.forEach((r, k) => {
+      if (r.kind === "group") {
+        y += GROUP_ROW;
+        return;
+      }
+      const prev = k > 0 ? items[k - 1] : null;
+      if (!rows && groupByDept && (!prev || (prev.kind === "stage" && prev.stage.department !== r.stage.department))) y += DEPT_ROW;
+      rowY.set(r.stage.id, y + ROW / 2 - 5);
+      y += ROW;
+    });
+  }
+  const byId = new Map(stages.map((s) => [s.id, s]));
+  const arrows = (deps ?? [])
+    .map((d) => {
+      const a = byId.get(d.pred_id);
+      const b = byId.get(d.succ_id);
+      const ya = rowY.get(d.pred_id);
+      const yb = rowY.get(d.succ_id);
+      if (!a || !b || ya === undefined || yb === undefined) return null;
+      const ae = drag?.id === a.id ? drag.end : a.actual_end ?? effectiveEnd(a);
+      const bs = drag?.id === b.id ? drag.start : b.plan_start;
+      if (!ae || !bs) return null;
+      const x1 = x(ae) + ppd;
+      const x2 = x(bs);
+      const late = ae >= bs;
+      let path: string;
+      if (x2 - x1 >= 14) {
+        path = `M${x1},${ya} H${x1 + 6} V${yb} H${x2 - 2}`;
+      } else {
+        const mid = yb > ya ? yb - ROW / 2 + 4 : yb + ROW / 2 - 4;
+        path = `M${x1},${ya} H${x1 + 6} V${mid} H${x2 - 10} V${yb} H${x2 - 2}`;
+      }
+      return { key: d.pred_id + d.succ_id, path, late, title: `${a.name} → ${b.name}${late ? " (겹침: 앞 단계가 끝나기 전에 시작)" : ""}` };
+    })
+    .filter(Boolean) as { key: string; path: string; late: boolean; title: string }[];
+
   return (
     <div
       ref={scroller}
@@ -209,6 +279,7 @@ export function Gantt({
           <div
             className="sticky left-0 z-30 flex shrink-0 items-end border-r border-black/[0.08] bg-white px-3 pb-1.5 text-xs font-medium text-slate-500"
             style={{ width: LEFT, height: scale === "week" ? 52 : 36 }}
+            data-gantt-left
           >
             단계
           </div>
@@ -254,8 +325,110 @@ export function Gantt({
           {todayX !== null && <div className="absolute bottom-0 top-0 w-px bg-brand-500" style={{ left: todayX }} />}
         </div>
 
+        {/* 선후 관계 화살표 */}
+        {arrows.length > 0 && (
+          <svg className="pointer-events-none absolute top-0 z-[5]" style={{ left: LEFT, width, height: "100%" }} aria-hidden>
+            <defs>
+              <marker id="npd-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8" />
+              </marker>
+              <marker id="npd-arrow-late" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 z" fill="#f43f5e" />
+              </marker>
+            </defs>
+            {arrows.map((a) => (
+              <path
+                key={a.key}
+                d={a.path}
+                fill="none"
+                stroke={a.late ? "#f43f5e" : "#94a3b8"}
+                strokeWidth={1.25}
+                strokeDasharray={a.late ? "3 2" : undefined}
+                markerEnd={`url(#${a.late ? "npd-arrow-late" : "npd-arrow"})`}
+              >
+                <title>{a.title}</title>
+              </path>
+            ))}
+          </svg>
+        )}
+
         {/* 행 */}
-        {stages.map((s, i) => {
+        {items.map((row, k) => {
+          if (row.kind === "group") {
+            const g = row.group;
+            const sp = groupSpan(row.stages);
+            return (
+              <div key={`g-${g.id}`} className={`group/g relative flex border-b border-black/[0.06] bg-slate-50 ${menu === g.id ? "z-30" : "z-10"}`} style={{ height: GROUP_ROW }}>
+                <div
+                  className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-black/[0.08] bg-slate-50 pr-2 text-xs font-semibold text-slate-700"
+                  style={{ width: LEFT, paddingLeft: 8 + row.depth * 14 }}
+                >
+                  <button className="grid h-5 w-5 place-items-center rounded text-slate-500 hover:bg-black/[0.06]" onClick={() => onToggleGroup?.(g.id)} title={row.collapsed ? "펼치기" : "접기"}>
+                    {row.collapsed ? "▸" : "▾"}
+                  </button>
+                  <span className="min-w-0 flex-1 truncate" title={g.name}>
+                    {g.name}
+                  </span>
+                  <span className="shrink-0 text-[11px] font-normal tabular-nums text-slate-400">
+                    {sp.total ? `${sp.done}/${sp.total}` : "비어 있음"}
+                  </span>
+                  {canEdit && onGroupAction && (
+                    <span className="relative">
+                      <button
+                        className="grid h-5 w-5 place-items-center rounded font-normal text-slate-400 opacity-0 hover:bg-black/[0.06] hover:text-ink group-hover/g:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMenu(menu === g.id ? null : g.id);
+                        }}
+                        title="그룹 메뉴"
+                      >
+                        ⋯
+                      </button>
+                      {menu === g.id && (
+                        <div className="absolute left-0 top-6 z-40 w-40 rounded-lg border border-black/10 bg-white p-1 text-xs font-normal shadow-lg">
+                          {(
+                            [
+                              ["stage", "+ 이 그룹에 단계"],
+                              ["sub", "+ 하위 그룹"],
+                              ["rename", "이름 바꾸기"],
+                              ["up", "위로"],
+                              ["down", "아래로"],
+                              ["delete", "그룹 삭제 (안의 항목은 남김)"],
+                            ] as const
+                          ).map(([a, l]) => (
+                            <button
+                              key={a}
+                              className={`block w-full rounded px-2 py-1.5 text-left hover:bg-slate-50 ${a === "delete" ? "text-rose-600" : ""}`}
+                              onClick={() => {
+                                setMenu(null);
+                                onGroupAction(g, a);
+                              }}
+                            >
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <div className="relative" style={{ width }}>
+                  {sp.start && sp.end && (
+                    <div
+                      className="absolute top-[11px] h-[10px] overflow-hidden rounded-sm bg-slate-300"
+                      style={{ left: x(sp.start), width: Math.max(ppd, (diffDays(sp.start, sp.end) + 1) * ppd) }}
+                      title={`${g.name}\n${short(sp.start)} ~ ${short(sp.end)} · 진행률 ${sp.progress}%`}
+                    >
+                      <div className="h-full bg-slate-600" style={{ width: `${sp.progress}%` }} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+          const s = row.stage;
+          const i = row.no - 1;
+          const prevRow = k > 0 ? items[k - 1] : null;
           const st = stageFinalStatus(s, today);
           const meta = st ? STATUS_META[st] : null;
           const isDrag = drag?.id === s.id;
@@ -267,11 +440,12 @@ export function Gantt({
           // 캘린더가 계획일을 정하는 단계는 끌어서 바꾸지 않음
           const locked = !!s.cal_linked && s.cal_follow !== false;
           const byDept = colorBy === "dept" && dc;
-          const newGroup = groupByDept && (i === 0 || stages[i - 1].department !== s.department);
+          const newGroup = !rows && groupByDept && (!prevRow || (prevRow.kind === "stage" && prevRow.stage.department !== s.department));
+          const cc = checkCount?.[s.id];
           return (
             <Fragment key={s.id}>
             {newGroup && (
-              <div className="relative z-10 flex border-b border-black/[0.06]" style={{ height: 26, background: dc ? dc.light : "#f1f5f9" }}>
+              <div className="relative z-10 flex border-b border-black/[0.06]" style={{ height: DEPT_ROW, background: dc ? dc.light : "#f1f5f9" }}>
                 <div
                   className="sticky left-0 flex items-center gap-1.5 px-3 text-xs font-semibold"
                   style={{ width: LEFT, color: dc?.text, background: dc ? dc.light : "#f1f5f9" }}
@@ -291,13 +465,21 @@ export function Gantt({
                 className={`sticky left-0 z-10 flex shrink-0 items-center gap-2 border-r border-black/[0.08] px-3 text-left ${
                   selected ? "bg-brand-50" : "bg-white group-hover:bg-slate-50"
                 }`}
-                style={{ width: LEFT }}
+                style={{ width: LEFT, paddingLeft: 12 + row.depth * 14 }}
               >
                 {dc && <span className="absolute inset-y-0 left-0 w-[4px]" style={{ background: dc.solid }} />}
                 <span className="w-5 shrink-0 text-right text-xs tabular-nums text-slate-400">{i + 1}</span>
                 <StatusDot status={st} />
                 <span className="min-w-0 flex-1">
-                  <span className={`block truncate text-sm ${s.skipped ? "text-slate-400 line-through" : ""}`}>{s.name}</span>
+                  <span className={`flex items-center gap-1 text-sm ${s.skipped ? "text-slate-400 line-through" : ""}`}>
+                    <span className="truncate">{s.name}</span>
+                    {labelById &&
+                      (s.label_ids ?? []).map((id) =>
+                        labelById[id] ? (
+                          <span key={id} className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: labelById[id].color ?? "#64748b" }} title={labelById[id].name} />
+                        ) : null
+                      )}
+                  </span>
                   <span className="block truncate text-[11px] text-slate-400">
                     {subtitle ? (
                       subtitle(s)
@@ -358,6 +540,14 @@ export function Gantt({
                     📅
                   </span>
                 ) : null}
+                {cc && cc.total > 0 && (
+                  <span
+                    className={`shrink-0 rounded px-1 text-[10px] tabular-nums ${cc.done === cc.total ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+                    title={`체크리스트 ${cc.done}/${cc.total}`}
+                  >
+                    ☑{cc.done}/{cc.total}
+                  </span>
+                )}
                 {s.needs_check && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" title="확인 필요" />}
               </button>
 

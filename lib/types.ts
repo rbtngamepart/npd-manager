@@ -54,6 +54,11 @@ export interface Stage {
   cal_linked?: boolean;
   cal_follow?: boolean;
   cal_missing?: boolean;
+  /** 008 업데이트 후 */
+  group_id?: string | null;
+  label_ids?: string[];
+  ref_code?: string | null;
+  description_html?: string | null;
   updated_at: string;
   updated_by: string | null;
 }
@@ -69,6 +74,59 @@ export interface StageLog {
   body: string;
   author_id: string | null;
   created_at: string;
+  /** 008 업데이트 후 */
+  body_html?: string | null;
+  edited_at?: string | null;
+  source?: "jira" | "confluence" | null;
+  ext_key?: string | null;
+  ext_url?: string | null;
+  ext_title?: string | null;
+  ext_status?: string | null;
+}
+
+export interface StageGroup {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  name: string;
+  sort_order: number;
+}
+
+export interface StageLabel {
+  id: string;
+  name: string;
+  color: string | null;
+  sort_order: number;
+}
+
+export interface StageCheck {
+  id: string;
+  project_id: string;
+  stage_id: string;
+  body: string;
+  done: boolean;
+  sort_order: number;
+  done_by: string | null;
+  done_at: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface StageLink {
+  id: string;
+  project_id: string;
+  stage_id: string;
+  title: string | null;
+  url: string;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface StageDep {
+  project_id: string;
+  pred_id: string;
+  succ_id: string;
 }
 
 export interface TemplateStage {

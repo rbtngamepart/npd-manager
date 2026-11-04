@@ -66,3 +66,80 @@ body {
   border: 2px solid transparent;
   background-clip: content-box;
 }
+
+/* 서식 있는 메모 */
+.rich {
+  line-height: 1.6;
+  word-break: break-word;
+}
+.rich p {
+  margin: 0.15em 0;
+}
+.rich ul,
+.rich ol {
+  margin: 0.2em 0;
+  padding-left: 1.4em;
+}
+.rich ul {
+  list-style: disc;
+}
+.rich ul ul {
+  list-style: circle;
+}
+.rich ol {
+  list-style: decimal;
+}
+.rich a {
+  color: var(--color-brand-600);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rich blockquote {
+  border-left: 3px solid rgba(0, 0, 0, 0.12);
+  padding-left: 0.75em;
+  color: #64748b;
+}
+.rich ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.1em;
+}
+.rich ul[data-type="taskList"] ul[data-type="taskList"] {
+  padding-left: 1.3em;
+}
+.rich ul[data-type="taskList"] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45em;
+}
+.rich ul[data-type="taskList"] > li > label {
+  flex: none;
+  margin-top: 0.3em;
+  user-select: none;
+}
+.rich ul[data-type="taskList"] > li > label > span {
+  display: none;
+}
+.rich ul[data-type="taskList"] > li > div {
+  flex: 1;
+  min-width: 0;
+}
+.rich ul[data-type="taskList"] > li[data-checked="true"] > div {
+  color: #94a3b8;
+  text-decoration: line-through;
+}
+.rich input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-brand-500);
+  cursor: pointer;
+}
+.rich input[type="checkbox"]:disabled {
+  cursor: default;
+}
+.rich p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #94a3b8;
+  pointer-events: none;
+}

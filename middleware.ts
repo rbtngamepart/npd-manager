@@ -32,7 +32,8 @@ export async function middleware(request: NextRequest) {
   if (!user && !isPublic) {
     const to = request.nextUrl.clone();
     to.pathname = "/login";
-    to.search = "";
+    // 로그인 후 원래 가려던 곳으로 (예: 지라에 붙인 단계 링크)
+    to.search = path === "/" ? "" : `?next=${encodeURIComponent(path + request.nextUrl.search)}`;
     return NextResponse.redirect(to);
   }
   return response;

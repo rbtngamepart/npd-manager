@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { DEFAULT_DEPARTMENTS, DEFAULT_ROLES } from "@/lib/departments";
-import type { Department, Profile, RoleType } from "@/lib/types";
+import type { Department, Profile, RoleType, StageLabel } from "@/lib/types";
 
 interface Ctx {
   me: Profile | null;
@@ -20,6 +20,9 @@ interface Ctx {
   roleTypes: RoleType[] | null;
   roleNames: string[];
   reloadRoles: () => Promise<void>;
+  /** 업무 속성 라벨. 아직 DB 업데이트(008) 전이면 null */
+  labels: StageLabel[] | null;
+  reloadLabels: () => Promise<void>;
 }
 
 export const AppCtx = createContext<Ctx>({
@@ -34,6 +37,8 @@ export const AppCtx = createContext<Ctx>({
   roleTypes: null,
   roleNames: DEFAULT_ROLES,
   reloadRoles: async () => {},
+  labels: null,
+  reloadLabels: async () => {},
 });
 
 export function useApp() {
@@ -51,6 +56,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [roleTypes, setRoleTypes] = useState<RoleType[] | null>(null);
+  const [labels, setLabels] = useState<StageLabel[] | null>(null);
+
+  const reloadLabels = useCallback(async () => {
+    const { data, error } = await supabase().from("stage_labels").select("*").order("sort_order").order("name");
+    setLabels(error ? null : ((data ?? []) as StageLabel[]));
+  }, []);
 
   const reloadRoles = useCallback(async () => {
     const { data, error } = await supabase().from("role_types").select("*").order("sort_order").order("name");
@@ -72,12 +83,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
-    const [{ data }] = await Promise.all([sb.from("profiles").select("*").order("created_at"), reloadDepartments(), reloadRoles()]);
+    const [{ data }] = await Promise.all([sb.from("profiles").select("*").order("created_at"), reloadDepartments(), reloadRoles(), reloadLabels()]);
     const list = (data ?? []) as Profile[];
     setProfiles(list);
     setMe(list.find((p) => p.id === user.id) ?? null);
     setLoading(false);
-  }, [reloadDepartments, reloadRoles]);
+  }, [reloadDepartments, reloadRoles, reloadLabels]);
 
   useEffect(() => {
     reloadProfiles();
@@ -97,7 +108,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AppCtx.Provider
-      value={{ me, profiles, profileById, reloadProfiles, loading, departments, deptNames, reloadDepartments, roleTypes, roleNames, reloadRoles }}
+      value={{ me, profiles, profileById, reloadProfiles, loading, departments, deptNames, reloadDepartments, roleTypes, roleNames, reloadRoles, labels, reloadLabels }}
     >
       {children}
     </AppCtx.Provider>
