@@ -93,7 +93,7 @@ function ProjectPage() {
 
   const toast = useCallback((m: string) => {
     setToastMsg(m);
-    setTimeout(() => setToastMsg(null), 2200);
+    setTimeout(() => setToastMsg(null), m.length > 40 ? 4500 : 2200);
   }, []);
 
   const load = useCallback(async () => {
@@ -766,6 +766,13 @@ function ProjectPage() {
                 checkCount={checkCount}
                 labelById={labelById}
                 onTreeDrop={useTree ? treeDrop : undefined}
+                onDragBlocked={() =>
+                  toast(
+                    !groups
+                      ? "끌어서 하위 단계로 만들려면 DB 업데이트가 필요합니다 (008_stage_tools.sql → 009_stage_tree.sql)"
+                      : "'부서별로 묶기'를 끄면 단계를 끌어서 하위 단계로 만들 수 있어요"
+                  )
+                }
               />
               {useTree && (deptFilter.length > 0 || labelFilter.length > 0 || !!groupIds) && (
                 <p className="border-t border-black/[0.06] px-4 py-1.5 text-[11px] text-slate-500">필터에 맞는 단계가 있는 그룹·상위 단계만 보입니다.</p>

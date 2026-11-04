@@ -54,6 +54,7 @@ export function Gantt({
   checkCount,
   labelById,
   onTreeDrop,
+  onDragBlocked,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -84,13 +85,24 @@ export function Gantt({
   labelById?: Record<string, StageLabel>;
   /** 단계 이름을 끌어서 다른 단계·그룹 위(안)/앞/뒤에 놓기 */
   onTreeDrop?: (drag: TreeRef, target: TreeRef, zone: DropZone) => void;
+  /** 지금은 끌어서 옮길 수 없을 때 (이유 안내용) */
+  onDragBlocked?: () => void;
 }) {
   const [dragItem, setDragItem] = useState<TreeRef | null>(null);
   const [over, setOver] = useState<(TreeRef & { zone: DropZone }) | null>(null);
   const dnd = !!onTreeDrop && canEdit && !!rows;
   const dragProps = (ref: TreeRef) =>
-    dnd
-      ? {
+    !dnd
+      ? canEdit && onDragBlocked
+        ? {
+            draggable: true,
+            onDragStart: (e: React.DragEvent) => {
+              e.preventDefault();
+              onDragBlocked();
+            },
+          }
+        : {}
+      : {
           draggable: true,
           onDragStart: (e: React.DragEvent) => {
             e.dataTransfer.effectAllowed = "move";
@@ -419,7 +431,7 @@ export function Gantt({
                 {...dropProps({ kind: "group", id: g.id })}
               >
                 <div
-                  className={`sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-black/[0.08] bg-slate-50 pr-2 text-xs font-semibold text-slate-700 ${dnd ? "cursor-grab active:cursor-grabbing" : ""} ${dragItem?.id === g.id ? "opacity-40" : ""}`}
+                  className={`sticky left-0 z-10 flex shrink-0 select-none items-center gap-1.5 border-r border-black/[0.08] bg-slate-50 pr-2 text-xs font-semibold text-slate-700 ${dnd ? "cursor-grab active:cursor-grabbing" : ""} ${dragItem?.id === g.id ? "opacity-40" : ""}`}
                   style={{ width: LEFT, paddingLeft: 8 + row.depth * 14 }}
                   {...dragProps({ kind: "group", id: g.id })}
                 >
@@ -526,7 +538,7 @@ export function Gantt({
                 tabIndex={0}
                 onClick={() => onSelect(s.id)}
                 onKeyDown={(e) => e.key === "Enter" && onSelect(s.id)}
-                className={`sticky left-0 z-10 flex shrink-0 cursor-pointer items-center gap-2 border-r border-black/[0.08] px-3 text-left ${
+                className={`sticky left-0 z-10 flex shrink-0 cursor-pointer select-none items-center gap-2 border-r border-black/[0.08] px-3 text-left ${
                   selected ? "bg-brand-50" : "bg-white group-hover:bg-slate-50"
                 } ${dragItem?.id === s.id ? "opacity-40" : ""}`}
                 style={{ width: LEFT, paddingLeft: 12 + row.depth * 14 }}
