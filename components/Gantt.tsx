@@ -113,8 +113,7 @@ export function Gantt({
             setDragItem(null);
             setOver(null);
           },
-        }
-      : {};
+        };
   const dropProps = (ref: TreeRef) =>
     dnd && dragItem
       ? {
