@@ -14,7 +14,7 @@ import type { CalendarEvent } from "@/lib/types";
 import { RichEditor, RichView, htmlToText, isEmptyHtml, textToHtml } from "./RichText";
 import { LabelPicker } from "./Labels";
 import { StageChecklist, StageDeps, StageExternal, StageLinks } from "./StageExtras";
-import { groupOptions } from "@/lib/groups";
+import { effectiveGroup, groupOptions, groupPath, stagePath } from "@/lib/groups";
 
 export const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -349,7 +349,32 @@ export function StagePanel({
       )}
       {v8 && (
         <div className="grid gap-2 sm:grid-cols-2" data-tour="sp-class">
-          {groups && (
+          {groups && stage.parent_id && (
+            <div>
+              <label className="label">상위 단계</label>
+              <div className="flex min-h-[34px] items-center gap-2 rounded-lg border border-black/10 bg-slate-50 px-2.5 py-1 text-sm">
+                <button className="min-w-0 flex-1 truncate text-left hover:underline" onClick={() => onOpenStage(stage.parent_id!)} title="상위 단계 열기">
+                  {stagePath(stage, stages) || "—"}
+                </button>
+                {canEdit && (
+                  <button
+                    className="shrink-0 text-[11px] text-slate-500 hover:text-ink"
+                    title="한 칸 위로 꺼내기"
+                    onClick={() => {
+                      const parent = stages.find((x) => x.id === stage.parent_id);
+                      onSave({ parent_id: parent?.parent_id ?? null, group_id: parent ? effectiveGroup(parent, stages) : null });
+                    }}
+                  >
+                    꺼내기 ↖
+                  </button>
+                )}
+              </div>
+              {groups.length > 0 && (
+                <p className="mt-1 text-[11px] text-slate-400">그룹: {groupPath(effectiveGroup(stage, stages), groups) || "없음"} (상위 단계를 따름)</p>
+              )}
+            </div>
+          )}
+          {groups && !stage.parent_id && (
             <div>
               <label className="label">그룹 (상위 분류)</label>
               <select className="input" disabled={ro} value={f.group_id ?? ""} onChange={(e) => set("group_id", e.target.value || null)}>

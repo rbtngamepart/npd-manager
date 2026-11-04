@@ -56,6 +56,8 @@ export interface Stage {
   cal_missing?: boolean;
   /** 008 업데이트 후 */
   group_id?: string | null;
+  /** 009 업데이트 후: 상위 단계 (단계 아래 단계) */
+  parent_id?: string | null;
   label_ids?: string[];
   ref_code?: string | null;
   description_html?: string | null;

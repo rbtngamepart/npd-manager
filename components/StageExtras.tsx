@@ -7,7 +7,8 @@ import { linkInfo, linkTitle } from "@/lib/links";
 import { predsOf, succsOf, wouldCycle } from "@/lib/deps";
 import { relativeTime, short } from "@/lib/dates";
 import type { Profile, Stage, StageCheck, StageDep, StageLink, StageLog } from "@/lib/types";
-import { displayName } from "./AppProvider";
+import { displayName, useApp } from "./AppProvider";
+import { drivePickerConfigured, openDrivePicker } from "@/lib/drivePicker";
 
 function Head({ title, right, hint }: { title: React.ReactNode; right?: React.ReactNode; hint?: string }) {
   return (
@@ -212,7 +213,37 @@ export function StageLinks({
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [adding, setAdding] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const { me } = useApp();
   const sb = supabase();
+
+  async function pickDrive() {
+    if (!drivePickerConfigured) {
+      alert(
+        "구글 드라이브 선택 창은 관리자가 한 번 설정해야 쓸 수 있습니다.\n(Netlify 환경변수 NEXT_PUBLIC_GOOGLE_API_KEY, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_APP_ID)\n\n그 전에는 드라이브에서 '링크 복사'한 주소를 [+ 주소]로 붙여넣어 주세요."
+      );
+      return;
+    }
+    setPicking(true);
+    try {
+      const files = await openDrivePicker({ loginHint: me?.email });
+      if (!files.length) return;
+      const have = new Set(items.map((i) => i.url));
+      const base = items.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
+      const rows = files
+        .filter((f) => !have.has(f.url))
+        .map((f, k) => ({ project_id: projectId, stage_id: stageId, url: f.url, title: f.name, sort_order: base + k }));
+      if (rows.length) {
+        const { error } = await sb.from("stage_links").insert(rows);
+        if (error) throw error;
+      }
+      onChanged();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e));
+    } finally {
+      setPicking(false);
+    }
+  }
 
   async function add() {
     const u = url.trim();
@@ -248,11 +279,23 @@ export function StageLinks({
           </>
         }
         right={
-          canEdit &&
-          !adding && (
-            <button className="text-[11px] text-brand-600 hover:underline" onClick={() => setAdding(true)}>
-              + 연결
-            </button>
+          canEdit && (
+            <span className="flex items-center gap-1">
+              <button
+                className="inline-flex items-center gap-1 rounded-md border border-black/10 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600 disabled:opacity-50"
+                onClick={pickDrive}
+                disabled={picking}
+                title="내 구글 드라이브에서 파일·폴더 고르기 (여러 개 가능)"
+                data-tour="sp-drive"
+              >
+                📁 {picking ? "여는 중…" : "구글 드라이브"}
+              </button>
+              {!adding && (
+                <button className="rounded-md px-1.5 py-0.5 text-[11px] text-brand-600 hover:bg-brand-50" onClick={() => setAdding(true)}>
+                  + 주소
+                </button>
+              )}
+            </span>
           )
         }
       />
@@ -288,7 +331,7 @@ export function StageLinks({
           );
         })}
       </ul>
-      {items.length === 0 && !adding && <p className="text-xs text-slate-400">{canEdit ? "구글 드라이브 파일·문서·시트 주소를 붙여넣으면 여기서 바로 볼 수 있어요." : "없음"}</p>}
+      {items.length === 0 && !adding && <p className="text-xs text-slate-400">{canEdit ? "[구글 드라이브]로 파일을 고르거나 주소를 붙여넣으면 여기서 바로 볼 수 있어요." : "없음"}</p>}
       {adding && (
         <div className="space-y-1.5 rounded-lg bg-slate-50 p-2">
           <input

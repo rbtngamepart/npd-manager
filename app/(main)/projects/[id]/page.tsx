@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
-import { Gantt, type GroupAction } from "@/components/Gantt";
+import { Gantt, type GroupAction, type TreeRef } from "@/components/Gantt";
 import { StagePanel } from "@/components/StagePanel";
 import { ProgressTable } from "@/components/ProgressTable";
 import { ImportDialog } from "@/components/ImportDialog";
@@ -19,7 +19,7 @@ import { collectDepartments, deptRole, deptWithRole, matchesDepts } from "@/lib/
 import { ProjectFilter } from "@/components/ProjectFilter";
 import { makeDeptColor } from "@/lib/deptColors";
 import type { CalendarEvent, Light, LogKind, Project, ProjectMember, Stage, StageCheck, StageDep, StageGroup, StageLink, StageLog } from "@/lib/types";
-import { buildRows, descendantGroupIds, groupOptions, groupPath, moveWithinParent, nextOrder } from "@/lib/groups";
+import { buildRows, descendantGroupIds, dropPlan, effectiveGroup, groupOptions, groupPath, moveWithinParent, nextOrder, stagePath, type DropZone, type OrderPatch } from "@/lib/groups";
 import { planShift, type ShiftItem, type ShiftMode } from "@/lib/deps";
 import { RichView, htmlToText } from "@/components/RichText";
 import { KIND } from "@/components/StagePanel";
@@ -257,23 +257,55 @@ function ProjectPage() {
 
   async function deleteStage(sid: string) {
     const s = stages.find((x) => x.id === sid);
-    if (!s || !confirm(`'${s.name}' 단계를 삭제할까요?`)) return;
+    const kids = stages.filter((x) => x.parent_id === sid);
+    if (!s || !confirm(`'${s.name}' 단계를 삭제할까요?${kids.length ? `\n하위 단계 ${kids.length}개는 한 칸 위로 올라갑니다.` : ""}`)) return;
+    if (kids.length) {
+      await supabase()
+        .from("stages")
+        .update({ parent_id: s.parent_id ?? null, group_id: s.parent_id ? effectiveGroup(s, stages) : s.group_id ?? null })
+        .eq("parent_id", sid);
+    }
     await supabase().from("stages").delete().eq("id", sid);
     setSelected(null);
     toast("단계를 삭제했습니다");
     load();
   }
 
-  async function applyOrder(r: ReturnType<typeof moveWithinParent>) {
+  async function applyOrder(r: OrderPatch | null) {
     if (!r) return;
     const sb = supabase();
-    setStages((ss) => ss.map((s) => ({ ...s, sort_order: r.stages.find((x) => x.id === s.id)?.sort_order ?? s.sort_order })));
-    setGroups((gs) => gs && gs.map((g) => ({ ...g, sort_order: r.groups.find((x) => x.id === g.id)?.sort_order ?? g.sort_order })));
-    await Promise.all([
-      ...r.stages.map((x) => sb.from("stages").update({ sort_order: x.sort_order }).eq("id", x.id)),
-      ...r.groups.map((x) => sb.from("stage_groups").update({ sort_order: x.sort_order }).eq("id", x.id)),
+    setStages((ss) => ss.map((s) => {
+      const x = r.stages.find((y) => y.id === s.id);
+      return x ? { ...s, ...x } : s;
+    }));
+    setGroups((gs) => gs && gs.map((g) => {
+      const x = r.groups.find((y) => y.id === g.id);
+      return x ? { ...g, ...x } : g;
+    }));
+    const res = await Promise.all([
+      ...r.stages.map(({ id: sid, ...patch }) => sb.from("stages").update(patch).eq("id", sid)),
+      ...r.groups.map(({ id: gid, ...patch }) => sb.from("stage_groups").update(patch).eq("id", gid)),
     ]);
+    const err = res.find((x) => x.error)?.error;
+    if (err) toast(/parent_id/.test(err.message) ? "DB 업데이트(009_stage_tree.sql)가 필요합니다" : `저장 실패: ${err.message}`);
     load();
+  }
+
+  // 간트에서 끌어서 놓기
+  async function treeDrop(drag: TreeRef, target: TreeRef, zone: DropZone) {
+    if (!groups) return;
+    if (zone === "inside" && target.kind === "stage" && stages[0]?.parent_id === undefined) {
+      return toast("단계 아래에 넣으려면 DB 업데이트(009_stage_tree.sql)가 필요합니다");
+    }
+    const plan = dropPlan(drag, target, zone, stages, groups);
+    if (!plan) return toast("그 위치로는 옮길 수 없습니다 (자기 아래로 넣거나, 그룹을 단계 안에 넣을 수 없어요)");
+    if (stages[0]?.parent_id === undefined) plan.stages.forEach((x) => delete x.parent_id);
+    if (zone === "inside" && collapsed.has(target.id)) toggleGroup(target.id);
+    await applyOrder(plan);
+    if (zone === "inside") {
+      const name = target.kind === "stage" ? stages.find((x) => x.id === target.id)?.name : groups.find((x) => x.id === target.id)?.name;
+      toast(`'${name}' 아래로 옮겼습니다`);
+    }
   }
 
   async function groupAction(g: StageGroup, a: GroupAction) {
@@ -423,9 +455,12 @@ function ProjectPage() {
     (s) =>
       matchesDepts(s, deptFilter) &&
       (!labelFilter.length || (s.label_ids ?? []).some((l) => labelFilter.includes(l))) &&
-      (!groupIds || (!!s.group_id && groupIds.has(s.group_id)))
+      (!groupIds || (() => {
+        const g = effectiveGroup(s, stages);
+        return !!g && groupIds.has(g);
+      })())
   );
-  const useTree = !!groups && groups.length > 0 && !groupDept;
+  const useTree = !!groups && !groupDept;
   const rows = useTree ? buildRows(stages, groups!, new Set(filtered.map((s) => s.id)), collapsed, !deptFilter.length && !labelFilter.length && !groupIds) : undefined;
   const checkCount: Record<string, { done: number; total: number }> = {};
   (checks ?? []).forEach((c) => {
@@ -442,7 +477,10 @@ function ProjectPage() {
       if (!logKinds.includes(k)) return false;
     }
     if (labelFilter.length && !(st?.label_ids ?? []).some((x) => labelFilter.includes(x))) return false;
-    if (groupIds && !(st?.group_id && groupIds.has(st.group_id))) return false;
+    if (groupIds && !(st && (() => {
+      const g = effectiveGroup(st, stages);
+      return !!g && groupIds.has(g);
+    })())) return false;
     if (deptFilter.length && !(st && matchesDepts(st, deptFilter))) return false;
     if (logQ.trim() && !`${l.body} ${l.stage_name ?? ""} ${l.ext_title ?? ""}`.toLowerCase().includes(logQ.trim().toLowerCase())) return false;
     return true;
@@ -557,7 +595,10 @@ function ProjectPage() {
                     id: g.id,
                     name: `${"\u00a0\u00a0".repeat(g.depth)}${g.depth ? "└ " : ""}${g.name}`,
                     category: g.depth ? groupPath(g.id, groups) : null,
-                    count: stages.filter((s) => s.group_id && ids.has(s.group_id)).length,
+                    count: stages.filter((s) => {
+                      const eg = effectiveGroup(s, stages);
+                      return !!eg && ids.has(eg);
+                    }).length,
                   };
                 })}
                 value={groupFilter}
@@ -724,9 +765,10 @@ function ProjectPage() {
                 deps={deps}
                 checkCount={checkCount}
                 labelById={labelById}
+                onTreeDrop={useTree ? treeDrop : undefined}
               />
-              {useTree && groupDept === false && (deptFilter.length > 0 || labelFilter.length > 0 || !!groupIds) && (
-                <p className="border-t border-black/[0.06] px-4 py-1.5 text-[11px] text-slate-500">필터에 맞는 단계가 있는 그룹만 보입니다.</p>
+              {useTree && (deptFilter.length > 0 || labelFilter.length > 0 || !!groupIds) && (
+                <p className="border-t border-black/[0.06] px-4 py-1.5 text-[11px] text-slate-500">필터에 맞는 단계가 있는 그룹·상위 단계만 보입니다.</p>
               )}
               {projectDepts.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 border-t border-black/[0.06] px-4 py-2 text-xs" data-tour="dept-legend">
@@ -782,7 +824,11 @@ function ProjectPage() {
                   <span className="h-3 w-px bg-brand-500" />
                   오늘
                 </span>
-                {canEdit && <span className="ml-auto">막대를 끌어서 이동 · 양 끝을 끌어서 기간 조정</span>}
+                {canEdit && (
+                  <span className="ml-auto">
+                    막대를 끌어서 이동 · 양 끝을 끌어서 기간 조정{useTree ? " · 단계 이름을 끌어 다른 단계 위에 놓으면 하위 단계로" : ""}
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -850,7 +896,9 @@ function ProjectPage() {
               <ol className="relative space-y-4 border-l border-black/[0.08] pl-5">
                 {shownLogs.map((l) => {
                   const st = l.stage_id ? stageById.get(l.stage_id) : undefined;
-                  const path = st?.group_id && groups ? groupPath(st.group_id, groups) : "";
+                  const path = st
+                    ? [groups ? groupPath(effectiveGroup(st, stages), groups) : "", stagePath(st, stages)].filter(Boolean).join(" › ")
+                    : "";
                   return (
                     <li key={l.id} className="relative">
                       <span

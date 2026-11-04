@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, diffDays, maxDate, minDate, monthStart, nextMonth, short, weekNumber } from "@/lib/dates";
 import { STATUS_META, stageFinalStatus } from "@/lib/status";
 import type { Stage, StageDep, StageGroup, StageLabel } from "@/lib/types";
-import { groupSpan, type Row } from "@/lib/groups";
+import { groupSpan, type DropZone, type Row } from "@/lib/groups";
 import { effectiveEnd } from "@/lib/deps";
 import { StatusDot } from "./ui";
 import { roleLabel, rolesFor, toList } from "@/lib/departments";
@@ -31,6 +31,7 @@ const DEPT_ROW = 26;
 const LEFT = 280;
 
 export type GroupAction = "rename" | "sub" | "stage" | "up" | "down" | "delete";
+export type TreeRef = { kind: "group" | "stage"; id: string };
 
 export function Gantt({
   stages,
@@ -52,6 +53,7 @@ export function Gantt({
   deps,
   checkCount,
   labelById,
+  onTreeDrop,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -80,7 +82,59 @@ export function Gantt({
   /** 체크리스트 진행 */
   checkCount?: Record<string, { done: number; total: number }>;
   labelById?: Record<string, StageLabel>;
+  /** 단계 이름을 끌어서 다른 단계·그룹 위(안)/앞/뒤에 놓기 */
+  onTreeDrop?: (drag: TreeRef, target: TreeRef, zone: DropZone) => void;
 }) {
+  const [dragItem, setDragItem] = useState<TreeRef | null>(null);
+  const [over, setOver] = useState<(TreeRef & { zone: DropZone }) | null>(null);
+  const dnd = !!onTreeDrop && canEdit && !!rows;
+  const dragProps = (ref: TreeRef) =>
+    dnd
+      ? {
+          draggable: true,
+          onDragStart: (e: React.DragEvent) => {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", ref.id);
+            setDragItem(ref);
+          },
+          onDragEnd: () => {
+            setDragItem(null);
+            setOver(null);
+          },
+        }
+      : {};
+  const dropProps = (ref: TreeRef) =>
+    dnd && dragItem
+      ? {
+          onDragOver: (e: React.DragEvent) => {
+            if (dragItem.id === ref.id && dragItem.kind === ref.kind) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const f = (e.clientY - r.top) / r.height;
+            // 그룹은 단계 안에 못 들어감
+            const canInside = !(dragItem.kind === "group" && ref.kind === "stage");
+            const zone: DropZone = f < 0.3 ? "before" : f > 0.7 || !canInside ? "after" : "inside";
+            if (over?.id !== ref.id || over.zone !== zone || over.kind !== ref.kind) setOver({ ...ref, zone });
+          },
+          onDrop: (e: React.DragEvent) => {
+            e.preventDefault();
+            const z = over && over.id === ref.id ? over.zone : "inside";
+            const d = dragItem;
+            setDragItem(null);
+            setOver(null);
+            if (d) onTreeDrop!(d, ref, z);
+          },
+        }
+      : {};
+  const dropCls = (ref: TreeRef) => {
+    if (!over || over.id !== ref.id || over.kind !== ref.kind) return "";
+    return over.zone === "inside"
+      ? "!bg-brand-50 ring-2 ring-inset ring-brand-500"
+      : over.zone === "before"
+        ? "shadow-[inset_0_3px_0_0_var(--color-brand-500)]"
+        : "shadow-[inset_0_-3px_0_0_var(--color-brand-500)]";
+  };
   const [menu, setMenu] = useState<string | null>(null);
   useEffect(() => {
     if (!menu) return;
@@ -226,7 +280,7 @@ export function Gantt({
   const todayX = today >= rangeStart && today <= rangeEnd ? x(today) + ppd / 2 : null;
 
   // 그릴 줄 목록 + 각 줄의 세로 위치 (선후 관계 화살표용)
-  const items: Row[] = rows ?? stages.map((s, i) => ({ kind: "stage" as const, stage: s, depth: 0, no: i + 1 }));
+  const items: Row[] = rows ?? stages.map((s, i) => ({ kind: "stage" as const, stage: s, depth: 0, no: i + 1, children: [], collapsed: false }));
   const headH = scale === "week" ? 52 : 36;
   const rowY = new Map<string, number>();
   {
@@ -358,10 +412,16 @@ export function Gantt({
             const g = row.group;
             const sp = groupSpan(row.stages);
             return (
-              <div key={`g-${g.id}`} className={`group/g relative flex border-b border-black/[0.06] bg-slate-50 ${menu === g.id ? "z-30" : "z-10"}`} style={{ height: GROUP_ROW }}>
+              <div
+                key={`g-${g.id}`}
+                className={`group/g relative flex border-b border-black/[0.06] bg-slate-50 ${menu === g.id ? "z-30" : "z-10"} ${dropCls({ kind: "group", id: g.id })}`}
+                style={{ height: GROUP_ROW }}
+                {...dropProps({ kind: "group", id: g.id })}
+              >
                 <div
-                  className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-black/[0.08] bg-slate-50 pr-2 text-xs font-semibold text-slate-700"
+                  className={`sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-black/[0.08] bg-slate-50 pr-2 text-xs font-semibold text-slate-700 ${dnd ? "cursor-grab active:cursor-grabbing" : ""} ${dragItem?.id === g.id ? "opacity-40" : ""}`}
                   style={{ width: LEFT, paddingLeft: 8 + row.depth * 14 }}
+                  {...dragProps({ kind: "group", id: g.id })}
                 >
                   <button className="grid h-5 w-5 place-items-center rounded text-slate-500 hover:bg-black/[0.06]" onClick={() => onToggleGroup?.(g.id)} title={row.collapsed ? "펼치기" : "접기"}>
                     {row.collapsed ? "▸" : "▾"}
@@ -457,17 +517,37 @@ export function Gantt({
               </div>
             )}
             <div
-              className={`group relative z-10 flex border-b border-black/[0.05] ${selected ? "bg-brand-50/50" : "hover:bg-slate-50/60"}`}
+              className={`group relative z-10 flex border-b border-black/[0.05] ${selected ? "bg-brand-50/50" : "hover:bg-slate-50/60"} ${dropCls({ kind: "stage", id: s.id })}`}
               style={{ height: ROW }}
+              {...dropProps({ kind: "stage", id: s.id })}
             >
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelect(s.id)}
-                className={`sticky left-0 z-10 flex shrink-0 items-center gap-2 border-r border-black/[0.08] px-3 text-left ${
+                onKeyDown={(e) => e.key === "Enter" && onSelect(s.id)}
+                className={`sticky left-0 z-10 flex shrink-0 cursor-pointer items-center gap-2 border-r border-black/[0.08] px-3 text-left ${
                   selected ? "bg-brand-50" : "bg-white group-hover:bg-slate-50"
-                }`}
+                } ${dragItem?.id === s.id ? "opacity-40" : ""}`}
                 style={{ width: LEFT, paddingLeft: 12 + row.depth * 14 }}
+                title={dnd ? "끌어서 다른 단계 위에 놓으면 그 단계의 하위 단계가 됩니다 (위·아래 가장자리에 놓으면 순서 이동)" : undefined}
+                {...dragProps({ kind: "stage", id: s.id })}
               >
                 {dc && <span className="absolute inset-y-0 left-0 w-[4px]" style={{ background: dc.solid }} />}
+                {row.kind === "stage" && row.children.length > 0 ? (
+                  <button
+                    className="-mr-1 grid h-5 w-4 shrink-0 place-items-center rounded text-[11px] text-slate-500 hover:bg-black/[0.06]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleGroup?.(s.id);
+                    }}
+                    title={row.collapsed ? `하위 단계 ${row.children.length}개 펼치기` : "접기"}
+                  >
+                    {row.collapsed ? "▸" : "▾"}
+                  </button>
+                ) : rows ? (
+                  <span className="-mr-1 w-4 shrink-0" />
+                ) : null}
                 <span className="w-5 shrink-0 text-right text-xs tabular-nums text-slate-400">{i + 1}</span>
                 <StatusDot status={st} />
                 <span className="min-w-0 flex-1">
@@ -549,7 +629,12 @@ export function Gantt({
                   </span>
                 )}
                 {s.needs_check && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" title="확인 필요" />}
-              </button>
+                {row.collapsed && row.children.length > 0 && (
+                  <span className="shrink-0 rounded bg-slate-100 px-1 text-[10px] text-slate-500" title="접힌 하위 단계">
+                    +{row.children.length}
+                  </span>
+                )}
+              </div>
 
               <div
                 className={`relative ${s.skipped ? "opacity-45" : ""}`}
@@ -567,6 +652,19 @@ export function Gantt({
                   </span>
                 )}
 
+                {/* 하위 단계 전체 기간 */}
+                {row.children.length > 0 &&
+                  (() => {
+                    const sp = groupSpan([s, ...row.children]);
+                    if (!sp.start || !sp.end) return null;
+                    return (
+                      <div
+                        className="pointer-events-none absolute top-[3px] h-[3px] rounded-full bg-slate-500/70"
+                        style={{ left: x(sp.start), width: Math.max(ppd, (diffDays(sp.start, sp.end) + 1) * ppd) }}
+                        title={`하위 단계 포함 ${short(sp.start)} ~ ${short(sp.end)}`}
+                      />
+                    );
+                  })()}
                 {/* 예상 완료 지연 구간 */}
                 {s.plan_end && s.expected_end && s.expected_end > s.plan_end && !isDrag && (
                   <div
