@@ -16,6 +16,8 @@ import { LabelPicker } from "./Labels";
 import { StageChecklist, StageDeps, StageExternal, StageLinks } from "./StageExtras";
 import { effectiveGroup, groupOptions, groupPath, stagePath } from "@/lib/groups";
 import { useUnsaved } from "@/lib/unsaved";
+import { Help, Tip } from "./Tip";
+import Link from "next/link";
 
 export const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -333,9 +335,29 @@ export function StagePanel({
         />
         {v8 && stage.ref_code && (
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]" data-tour="sp-ref">
-            <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono font-semibold tracking-wide text-white" title="지라·컨플루언스에 이 코드를 적으면 NPD가 찾아 기록에 모읍니다">
-              {stage.ref_code}
-            </span>
+            <Tip
+              interactive
+              width={290}
+              title="단계 코드"
+              content={
+                <>
+                  지라 이슈·댓글이나 컨플루언스 문서에 이 코드(또는 단계 링크)를 적어두면 NPD가 찾아서 이 단계 기록에 모읍니다.
+                  <ul className="mt-1 list-disc pl-4">
+                    <li>
+                      <b>결정:</b> / <b>이슈:</b>로 시작하는 줄은 결정·이슈 기록으로
+                    </li>
+                    <li>링크를 누르면 바로 이 단계가 열려요</li>
+                  </ul>
+                  <Link href="/atlassian" className="mt-1.5 inline-block">
+                    연동 설정·인식 테스트 →
+                  </Link>
+                </>
+              }
+            >
+              <span tabIndex={0} className="cursor-help rounded bg-slate-900 px-1.5 py-0.5 font-mono font-semibold tracking-wide text-white">
+                {stage.ref_code}
+              </span>
+            </Tip>
             <button className="rounded border border-black/10 px-1.5 py-0.5 text-slate-600 hover:bg-slate-50" onClick={() => onCopy(stage.ref_code!, `${stage.ref_code} 복사했습니다`)}>
               코드 복사
             </button>
@@ -409,7 +431,19 @@ export function StagePanel({
           )}
           {groups && !stage.parent_id && (
             <div>
-              <label className="label">그룹 (상위 분류)</label>
+              <label className="label">
+                그룹 (상위 분류)
+                <Help
+                  title="그룹"
+                  content={
+                    <>
+                      단계를 묶는 폴더입니다. 그룹 안에 그룹을 계속 넣을 수 있고, 간트에서 접고 펼치며 전체 기간을 한 줄로 봅니다.
+                      <br />
+                      간트에서 단계 이름을 끌어 그룹·다른 단계 위에 놓아도 옮겨져요.
+                    </>
+                  }
+                />
+              </label>
               <select className="input" disabled={ro} value={f.group_id ?? ""} onChange={(e) => set("group_id", e.target.value || null)}>
                 <option value="">— 그룹 없음 (맨 위)</option>
                 {groupOptions(groups).map((g) => (
@@ -424,7 +458,19 @@ export function StagePanel({
           )}
           {labels && (
             <div className={groups ? "" : "sm:col-span-2"}>
-              <label className="label">업무 속성</label>
+              <label className="label">
+                업무 속성
+                <Help
+                  title="업무 속성 (라벨)"
+                  content={
+                    <>
+                      기획·디자인·생산처럼 <b>일의 성격</b>을 붙이는 라벨입니다. 그룹(위치)과 달리 한 단계에 여러 개 붙일 수 있어요.
+                      <br />
+                      간트·진행관리·기록 탭의 [업무 속성] 필터로 골라 봅니다.
+                    </>
+                  }
+                />
+              </label>
               <LabelPicker value={f.label_ids ?? []} onChange={(v) => set("label_ids", v)} disabled={ro} />
             </div>
           )}
@@ -447,7 +493,8 @@ export function StagePanel({
       </div>
       <div data-tour="sp-related">
         <label className="label">
-          연관부서 <span className="font-normal text-slate-400">— 함께 검토·협업하는 부서. 그 부서의 일정에도 이 단계가 함께 표시됩니다</span>
+          연관부서
+          <Help content="함께 검토·협업하는 부서입니다. 단계를 부서마다 따로 만들지 않아도 그 부서의 [부서별 일정]에 이 단계가 함께 표시돼요." />
         </label>
         <DeptPicker value={f.related_departments} onChange={(v) => set("related_departments", v)} options={departments} exclude={f.department} disabled={ro} />
         {!ro && <p className="mt-1 text-[11px] text-slate-400">찾는 부서가 없으면 관리자에게 요청하세요 (사용자 관리 › 부서)</p>}
@@ -455,7 +502,25 @@ export function StagePanel({
       {rolesReady && (f.department || f.related_departments.length > 0) && (
         <div data-tour="sp-roles">
           <label className="label">
-            부서별 역할 <span className="font-normal text-slate-400">— 같은 단계라도 부서마다 맡는 일이 다를 때</span>
+            부서별 역할
+            <Help
+              title="부서별 역할"
+              width={300}
+              content={
+                roleTypes && roleTypes.some((r) => r.description) ? (
+                  <ul>
+                    {roleTypes.map((r) => (
+                      <li key={r.id}>
+                        <b>{r.name}</b>
+                        {r.description ? ` — ${r.description}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <>같은 단계라도 부서마다 맡는 일이 다를 때 지정합니다. 예) 게임파트: 주관 · 운영팀: 의견 청취 · 경영진: 의결</>
+                )
+              }
+            />
           </label>
           <div className="divide-y divide-black/[0.05] rounded-lg border border-black/10">
             {[f.department, ...f.related_departments].filter(Boolean).map((d, i) => {
@@ -575,7 +640,10 @@ export function StagePanel({
             <input type="date" className="input px-1.5" disabled={ro} value={f.actual_start ?? ""} onChange={(e) => set("actual_start", nul(e.target.value))} />
           </div>
           <div>
-            <label className="label">예상 완료일</label>
+            <label className="label">
+              예상 완료일
+              <Help content="계획보다 늦어질 것 같을 때 입력하세요. 간트에 빨간 점선으로 표시되고, 연결된 뒤 단계가 있으면 함께 미룰지 물어봐요." />
+            </label>
             <input type="date" className="input px-1.5" disabled={ro} value={f.expected_end ?? ""} onChange={(e) => set("expected_end", nul(e.target.value))} />
           </div>
           <div>
@@ -601,9 +669,34 @@ export function StagePanel({
       <section className="space-y-2" data-tour="sp-pm">
         <h3 className="text-xs font-semibold text-slate-700">PM 관리</h3>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            자동 <StatusChip status={auto} size="sm" />
-          </div>
+          <Tip
+            title="자동 상태는 이렇게 정해져요"
+            width={300}
+            content={
+              <ul>
+                <li>
+                  <b>완료</b> 실제 완료일 입력됨
+                </li>
+                <li>
+                  <b>대기</b> 계획 시작 전
+                </li>
+                <li>
+                  <b>차질</b> 계획 종료일이 지났는데 미완료
+                </li>
+                <li>
+                  <b>주의</b> 예상 완료가 계획보다 늦음, 또는 시작일이 지났는데 실제 시작 안 함
+                </li>
+                <li>
+                  <b>정상</b> 그 밖의 경우
+                </li>
+                <li className="mt-1 text-white/70">오른쪽 PM 판단을 고르면 자동 상태 대신 그 값이 최종 상태가 됩니다.</li>
+              </ul>
+            }
+          >
+            <div tabIndex={0} className="flex cursor-help items-center gap-1.5 text-xs text-slate-500">
+              자동 <StatusChip status={auto} size="sm" />
+            </div>
+          </Tip>
           <PmPicker value={f.pm_status} onChange={(v) => set("pm_status", v)} disabled={ro} />
         </div>
         <div>
@@ -618,10 +711,12 @@ export function StagePanel({
           <label className="flex items-center gap-1.5">
             <input type="checkbox" disabled={ro} checked={f.needs_check} onChange={(e) => set("needs_check", e.target.checked)} />
             확인 필요
+            <Help content="체크하면 대시보드의 '지금 챙겨야 할 단계'에 올라가고, 간트 이름 옆에 파란 점이 붙습니다." />
           </label>
           <label className="flex items-center gap-1.5 text-slate-500">
             <input type="checkbox" disabled={ro} checked={f.skipped} onChange={(e) => set("skipped", e.target.checked)} />
             이번 프로젝트에서 미사용
+            <Help content="이번 프로젝트에서 하지 않는 단계입니다. 간트에 흐리게 표시되고 진행률·상태 계산에서 빠져요. 템플릿 단계를 지우지 않고 남겨둘 때 씁니다." />
           </label>
         </div>
       </section>
@@ -779,14 +874,6 @@ export function StagePanel({
         )}
       </section>
 
-      {canEdit && (
-        <div className="border-t border-black/[0.06] pt-3">
-          <button className="btn-danger -ml-3 text-xs" onClick={onDelete}>
-            이 단계 삭제
-          </button>
-          <span className="text-[11px] text-slate-400">(진행 기록은 프로젝트에 남습니다)</span>
-        </div>
-      )}
     </div>
   );
 
@@ -871,8 +958,13 @@ export function StagePanel({
 
       {canEdit && (
         <div className="flex items-center gap-2 border-t border-black/[0.06] bg-slate-50/80 px-5 py-3" data-tour="sp-save">
-          <span className="text-xs text-slate-400">{dirty ? "저장하지 않은 변경사항이 있습니다" : `최근 수정 ${short(stage.updated_at.slice(0, 10))}`}</span>
-          <button className="btn-ghost ml-auto" disabled={!dirty} onClick={() => setF(base)}>
+          <Tip content="단계를 지웁니다. 진행 기록은 프로젝트 [기록] 탭에 남고, 하위 단계는 한 칸 위로 올라가요.">
+            <button className="btn-danger -ml-2 px-2 text-xs" onClick={onDelete}>
+              단계 삭제
+            </button>
+          </Tip>
+          <span className="min-w-0 truncate text-xs text-slate-400">{dirty ? "저장하지 않은 변경사항이 있습니다" : `최근 수정 ${short(stage.updated_at.slice(0, 10))}`}</span>
+          <button className="btn-ghost ml-auto shrink-0" disabled={!dirty} onClick={() => setF(base)}>
             되돌리기
           </button>
           <button className="btn-primary" disabled={!dirty || saving} onClick={save}>

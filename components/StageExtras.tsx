@@ -9,6 +9,7 @@ import { relativeTime, short } from "@/lib/dates";
 import type { Profile, Stage, StageCheck, StageDep, StageLink, StageLog } from "@/lib/types";
 import { displayName, useApp } from "./AppProvider";
 import { drivePickerConfigured, openDrivePicker } from "@/lib/drivePicker";
+import { Help, Tip } from "./Tip";
 
 function Head({ title, right, hint }: { title: React.ReactNode; right?: React.ReactNode; hint?: string }) {
   return (
@@ -422,9 +423,11 @@ export function StageDeps({
           {s.plan_start ? `${short(s.plan_start)}~${short(s.plan_end)}` : "일정 없음"}
         </span>
         {gap && (
-          <span className="shrink-0 rounded bg-rose-50 px-1 text-[10px] text-rose-600" title="앞 단계가 끝나기 전에 시작하도록 잡혀 있어요">
-            겹침
-          </span>
+          <Tip content="앞 단계가 끝나기 전에 뒤 단계가 시작하도록 잡혀 있어요. 간트에서는 빨간 점선 화살표로 보입니다.">
+            <span tabIndex={0} className="shrink-0 cursor-help rounded bg-rose-50 px-1 text-[10px] text-rose-600">
+              겹침
+            </span>
+          </Tip>
         )}
         {canEdit && (
           <button className="hidden shrink-0 px-1 text-[11px] text-rose-400 hover:text-rose-600 group-hover:inline" onClick={() => remove(pred, succ)} title="연결 끊기">
@@ -437,7 +440,23 @@ export function StageDeps({
 
   return (
     <section className="space-y-2" data-tour="sp-deps">
-      <Head title="연관 업무 (선후 관계)" hint="앞 단계가 늦어지면 뒤 단계도 함께 미룰지 물어봐요" />
+      <Head
+        title={
+          <>
+            연관 업무 (선후 관계)
+            <Help
+              title="선후 관계"
+              width={300}
+              content={
+                <>
+                  <b>앞 단계</b>가 끝나야 <b>이 단계</b>를 시작할 수 있을 때 연결합니다. 간트에 화살표로 이어져요.
+                  <br />앞 단계의 종료일·예상 완료일이 늦어지면 뒤 단계 목록을 보여주고 함께 미룰지 물어봅니다 (간격 유지 / 겹치는 만큼만).
+                </>
+              }
+            />
+          </>
+        }
+      />
       <div className="grid gap-2 text-xs">
         <div>
           <div className="mb-1 text-[11px] font-medium text-slate-500">⬅ 앞 단계 (먼저 끝나야 함)</div>

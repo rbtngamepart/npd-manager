@@ -25,6 +25,7 @@ import { RichView, htmlToText } from "@/components/RichText";
 import { KIND } from "@/components/StagePanel";
 import { LabelChip } from "@/components/Labels";
 import { confirmLeave } from "@/lib/unsaved";
+import { Help, Tip } from "@/components/Tip";
 import { runCalendarSync, summaryText } from "@/lib/calendar/client";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -530,13 +531,21 @@ function ProjectPage() {
       {/* 요약 */}
       <div className="card grid grid-cols-2 divide-black/[0.06] sm:grid-cols-3 lg:grid-cols-6 lg:divide-x" data-tour="proj-summary">
         {[
-          { l: "계획 완료", v: full(sum.planEnd) },
-          { l: "현재 예상 완료", v: full(sum.forecastEnd), sub: delay > 0 ? `+${delay}일 지연` : delay < 0 ? `${-delay}일 단축` : undefined },
+          { l: "계획 완료", v: full(sum.planEnd), help: "모든 단계의 계획 종료일 중 가장 늦은 날" },
+          {
+            l: "현재 예상 완료",
+            v: full(sum.forecastEnd),
+            sub: delay > 0 ? `+${delay}일 지연` : delay < 0 ? `${-delay}일 단축` : undefined,
+            help: "단계마다 실제 완료일 → 예상 완료일 → 계획 종료일 순으로 보고, 그중 가장 늦은 날. 계획 완료와의 차이가 지연 일수입니다.",
+          },
           { l: "실제 완료", v: full(sum.actualEnd) },
           { l: "단계", v: `${sum.counts.done} / ${sum.counts.total} 완료` },
         ].map((x) => (
           <div key={x.l} className="px-4 py-3">
-            <div className="text-xs text-slate-500">{x.l}</div>
+            <div className="text-xs text-slate-500">
+              {x.l}
+              {"help" in x && x.help && <Help content={x.help} />}
+            </div>
             <div className="mt-0.5 text-sm font-semibold tabular-nums">{x.v}</div>
             {x.sub && <div className={`text-xs ${delay > 0 ? "text-rose-600" : "text-emerald-600"}`}>{x.sub}</div>}
           </div>
@@ -546,7 +555,19 @@ function ProjectPage() {
           <ProgressBar value={sum.progress} className="mt-1.5" />
         </div>
         <div className="px-4 py-3">
-          <div className="text-xs text-slate-500">자동 → 최종</div>
+          <div className="text-xs text-slate-500">
+            자동 → 최종
+            <Help
+              title="프로젝트 상태"
+              content={
+                <>
+                  <b>자동</b>: 진행 중인 단계 중 가장 나쁜 상태 (차질 &gt; 주의 &gt; 정상 &gt; 대기)
+                  <br />
+                  <b>최종</b>: 오른쪽 위 [PM 판단]을 고르면 그 값, 아니면 자동 상태. 대시보드에는 최종 상태가 보여요.
+                </>
+              }
+            />
+          </div>
           <div className="mt-1 flex items-center gap-1">
             <StatusChip status={sum.auto} size="sm" />
             <span className="text-slate-300">→</span>
@@ -670,10 +691,12 @@ function ProjectPage() {
                     </button>
                   ))}
                 </div>
-                <label className="flex items-center gap-1 text-xs text-slate-600">
-                  <input type="checkbox" checked={groupDept} onChange={(e) => setGroupDept(e.target.checked)} />
-                  부서별로 묶기
-                </label>
+                <Tip content="단계를 담당부서별로 모아 봅니다. 켜 둔 동안에는 그룹·하위 단계 트리와 끌어서 옮기기가 꺼져요.">
+                  <label className="flex items-center gap-1 text-xs text-slate-600">
+                    <input type="checkbox" checked={groupDept} onChange={(e) => setGroupDept(e.target.checked)} />
+                    부서별로 묶기
+                  </label>
+                </Tip>
               </>
             )}
             {tab === "gantt" && (
