@@ -703,14 +703,11 @@ function ProjectPage() {
                 <button className="btn-outline py-1 text-xs" onClick={() => setImportOpen(true)} data-tour="import-btn">
                   시트에서 가져오기
                 </button>
-                {groups && tab === "gantt" && (
-                  <button className="btn-outline py-1 text-xs" onClick={() => addGroup(null)} data-tour="add-group" title="단계를 묶는 상위 분류 (그룹 안에 그룹도 가능)">
-                    + 그룹
+                {tab === "pm" && (
+                  <button className="btn-primary py-1 text-xs" onClick={() => addStage(null)}>
+                    + 단계
                   </button>
                 )}
-                <button className="btn-primary py-1 text-xs" onClick={() => addStage(null)} data-tour="add-stage">
-                  + 단계
-                </button>
               </>
             )}
             {(tab === "gantt" || tab === "pm") && (
@@ -742,6 +739,13 @@ function ProjectPage() {
             <div className="p-6">
               <Empty>
                 단계가 없습니다. {canEdit && "[+ 단계]로 추가하거나 [시트에서 가져오기]로 기존 시트를 붙여넣으세요."}
+                {canEdit && (
+                  <div className="mt-3">
+                    <button className="btn-primary py-1 text-xs" onClick={() => addStage(null)} data-tour="add-stage">
+                      + 단계
+                    </button>
+                  </div>
+                )}
               </Empty>
             </div>
           ) : (
@@ -766,6 +770,29 @@ function ProjectPage() {
                 checkCount={checkCount}
                 labelById={labelById}
                 onTreeDrop={useTree ? treeDrop : undefined}
+                headerActions={
+                  canEdit ? (
+                    <>
+                      {groups && (
+                        <button
+                          className="rounded-md border border-black/10 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:border-brand-500 hover:text-brand-600"
+                          onClick={() => addGroup(null)}
+                          data-tour="add-group"
+                          title="단계를 묶는 상위 분류 (그룹 안에 그룹도 가능)"
+                        >
+                          + 그룹
+                        </button>
+                      )}
+                      <button
+                        className="rounded-md bg-brand-500 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-brand-600"
+                        onClick={() => addStage(null)}
+                        data-tour="add-stage"
+                      >
+                        + 단계
+                      </button>
+                    </>
+                  ) : undefined
+                }
                 onDragBlocked={() =>
                   toast(
                     !groups

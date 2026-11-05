@@ -55,6 +55,7 @@ export function Gantt({
   labelById,
   onTreeDrop,
   onDragBlocked,
+  headerActions,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -87,6 +88,8 @@ export function Gantt({
   onTreeDrop?: (drag: TreeRef, target: TreeRef, zone: DropZone) => void;
   /** 지금은 끌어서 옮길 수 없을 때 (이유 안내용) */
   onDragBlocked?: () => void;
+  /** '단계' 머리 칸 오른쪽 버튼 (패널을 펼쳐도 보이는 자리) */
+  headerActions?: React.ReactNode;
 }) {
   const [dragItem, setDragItem] = useState<TreeRef | null>(null);
   const [over, setOver] = useState<(TreeRef & { zone: DropZone }) | null>(null);
@@ -346,7 +349,8 @@ export function Gantt({
             style={{ width: LEFT, height: scale === "week" ? 52 : 36 }}
             data-gantt-left
           >
-            단계
+            <span>단계</span>
+            {headerActions && <span className="ml-auto flex items-center gap-1 pb-0.5">{headerActions}</span>}
           </div>
           <div className="relative" style={{ width, height: scale === "week" ? 52 : 36 }}>
             {months.map((m) => (
