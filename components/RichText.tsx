@@ -224,6 +224,11 @@ export function RichEditor({
   submitRef.current = onSubmit;
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  // 사람이 직접 고칠 때만 변경으로 알림 (편집기가 처음 열리며 내용을 정리하는 것은 무시)
+  const touched = useRef(false);
+  const touch = () => {
+    touched.current = true;
+  };
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -255,11 +260,15 @@ export function RichEditor({
         return false;
       },
     },
-    onUpdate: ({ editor: e }) => changeRef.current(e.isEmpty ? "" : e.getHTML()),
+    onUpdate: ({ editor: e }) => {
+      if (!touched.current) return;
+      changeRef.current(e.isEmpty ? "" : e.getHTML());
+    },
   });
 
   useEffect(() => {
     if (!editor) return;
+    touched.current = false;
     if ((editor.isEmpty ? "" : editor.getHTML()) !== (value || "")) editor.commands.setContent(value || "", { emitUpdate: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, resetKey]);
@@ -271,7 +280,16 @@ export function RichEditor({
   if (disabled) return <RichView html={value} className="rounded-lg border border-black/10 bg-slate-50/60 px-3 py-2" />;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-black/15 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/15">
+    <div
+      className="overflow-hidden rounded-lg border border-black/15 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/15"
+      onKeyDownCapture={touch}
+      onMouseDownCapture={touch}
+      onPasteCapture={touch}
+      onDropCapture={touch}
+      onInputCapture={touch}
+      onCompositionStartCapture={touch}
+      onChangeCapture={touch}
+    >
       {editor && <Toolbar editor={editor} />}
       <EditorContent editor={editor} />
     </div>
