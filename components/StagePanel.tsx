@@ -205,7 +205,26 @@ export function StagePanel({
   const { mode, setMode, width, vw } = usePanelWidth();
   const dragging = useRef(false);
 
-  useEffect(() => setF(pick(stage)), [stage]);
+  // 다른 곳(체크리스트·링크 추가, 다른 사람 수정 등)에서 단계를 다시 불러와도
+  // 아직 저장하지 않은 내 입력은 지키고, 내가 안 건드린 칸만 새 값으로 바꿈
+  const lastBase = useRef<{ id: string; base: Form } | null>(null);
+  useEffect(() => {
+    const next = pick(stage);
+    const prev = lastBase.current;
+    lastBase.current = { id: stage.id, base: next };
+    if (!prev || prev.id !== stage.id) {
+      setF(next);
+      return;
+    }
+    setF((cur) => {
+      const merged = { ...cur } as Record<keyof Form, unknown>;
+      (Object.keys(next) as (keyof Form)[]).forEach((k) => {
+        const untouched = JSON.stringify(cur[k] ?? null) === JSON.stringify(prev.base[k] ?? null);
+        if (untouched) merged[k] = next[k];
+      });
+      return merged as Form;
+    });
+  }, [stage]);
   useEffect(() => setPreview(null), [stage.id]);
 
   const base = pick(stage);
