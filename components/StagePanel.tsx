@@ -15,6 +15,7 @@ import { RichEditor, RichView, htmlToText, isEmptyHtml, textToHtml } from "./Ric
 import { LabelPicker } from "./Labels";
 import { StageChecklist, StageDeps, StageExternal, StageLinks } from "./StageExtras";
 import { effectiveGroup, groupOptions, groupPath, stagePath } from "@/lib/groups";
+import { useUnsaved } from "@/lib/unsaved";
 
 export const KIND: Record<LogKind, { label: string; cls: string }> = {
   memo: { label: "메모", cls: "bg-slate-100 text-slate-600" },
@@ -227,8 +228,21 @@ export function StagePanel({
   }, [stage]);
   useEffect(() => setPreview(null), [stage.id]);
 
+  // 다른 단계로 바뀌면 쓰던 기록 초안도 비움
+  useEffect(() => {
+    setNote("");
+    setEditLog(null);
+    setNoteKey((k) => k + 1);
+  }, [stage.id]);
+
   const base = pick(stage);
   const dirty = (Object.keys(f) as (keyof Form)[]).some((k) => JSON.stringify(f[k] ?? null) !== JSON.stringify(base[k] ?? null));
+  const draftLog = v8 ? !isEmptyHtml(note) : !!note.trim();
+  useUnsaved(
+    "stage-panel",
+    `'${stage.name}' 단계${dirty ? " 수정 내용" : ""}${dirty && (draftLog || editLog) ? ", " : ""}${draftLog ? "작성 중인 기록" : editLog ? "수정 중인 기록" : ""}`,
+    dirty || draftLog || !!editLog
+  );
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
   const nul = (v: string) => (v.trim() === "" ? null : v);
 

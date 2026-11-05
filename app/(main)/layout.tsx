@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 import { TourProvider, useTour } from "@/components/Tour";
 import { useEffect } from "react";
 import { runCalendarSync } from "@/lib/calendar/client";
+import { UnsavedGuard, confirmLeave } from "@/lib/unsaved";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { me, loading } = useApp();
@@ -38,6 +39,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   }, [me?.approved]);
 
   async function logout() {
+    if (!confirmLeave()) return;
     await supabase().auth.signOut();
     router.replace("/login");
   }
@@ -136,6 +138,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6">{children}</main>
+      <UnsavedGuard />
     </div>
   );
 }

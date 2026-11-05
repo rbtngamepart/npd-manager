@@ -24,6 +24,7 @@ import { planShift, type ShiftItem, type ShiftMode } from "@/lib/deps";
 import { RichView, htmlToText } from "@/components/RichText";
 import { KIND } from "@/components/StagePanel";
 import { LabelChip } from "@/components/Labels";
+import { confirmLeave } from "@/lib/unsaved";
 import { runCalendarSync, summaryText } from "@/lib/calendar/client";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -85,6 +86,12 @@ function ProjectPage() {
   const [tab, setTab] = useState<Tab>("gantt");
   const [scale, setScale] = useState<"week" | "month">("week");
   const [selected, setSelected] = useState<string | null>(search.get("stage"));
+  // 단계 패널을 닫거나 다른 단계로 바꿀 때 저장 안 한 입력이 있으면 확인
+  const selectStage = (sid: string | null) => {
+    if (sid === selected) return;
+    if (!confirmLeave()) return;
+    setSelected(sid);
+  };
   const [importOpen, setImportOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [tplName, setTplName] = useState("");
@@ -244,6 +251,7 @@ function ProjectPage() {
   }
 
   async function addStage(groupId: string | null = null) {
+    if (!confirmLeave()) return;
     const order = groups ? nextOrder(groupId, stages, groups) : stages.reduce((m, s) => Math.max(m, s.sort_order), -1) + 1;
     const { data, error } = await supabase()
       .from("stages")
@@ -575,7 +583,10 @@ function ProjectPage() {
             ).map(([k, l]) => (
               <button
                 key={k}
-                onClick={() => setTab(k)}
+                onClick={() => {
+                  if (tab === "settings" && k !== "settings" && !confirmLeave(["project-settings"])) return;
+                  setTab(k);
+                }}
                 className={`rounded-md px-3 py-1.5 text-sm ${tab === k ? "bg-black/[0.06] font-medium" : "text-slate-500 hover:text-ink"}`}
               >
                 {l}
@@ -761,7 +772,7 @@ function ProjectPage() {
                 canEdit={canEdit}
                 today={today}
                 selectedId={selected}
-                onSelect={setSelected}
+                onSelect={selectStage}
                 onDates={(sid, start, end) => updateStage(sid, { plan_start: start, plan_end: end })}
                 rows={rows}
                 onToggleGroup={toggleGroup}
@@ -875,7 +886,7 @@ function ProjectPage() {
             colorOf={colorOf}
             today={today}
             canEdit={canEdit}
-            onSelect={setSelected}
+            onSelect={selectStage}
             onQuick={(sid, patch) => updateStage(sid, patch)}
           />
         )}
@@ -944,7 +955,7 @@ function ProjectPage() {
                         <span className={`rounded px-1.5 py-px text-[11px] ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
                         {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-[11px] text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
                         {path && <span className="text-slate-400">{path} ›</span>}
-                        <button className="font-medium text-slate-600 hover:underline" onClick={() => l.stage_id && setSelected(l.stage_id)}>
+                        <button className="font-medium text-slate-600 hover:underline" onClick={() => l.stage_id && selectStage(l.stage_id)}>
                           {st?.name ?? l.stage_name ?? "(삭제된 단계)"}
                         </button>
                         {(st?.label_ids ?? []).map((lid) => (labelById[lid] ? <LabelChip key={lid} label={labelById[lid]} small /> : null))}
@@ -1008,7 +1019,7 @@ function ProjectPage() {
           deps={deps}
           onUpdateLog={updateLog}
           onChanged={load}
-          onOpenStage={setSelected}
+          onOpenStage={selectStage}
           onCopy={copy}
           onSave={async (patch) => {
             await updateStage(sel.id, patch);
@@ -1018,7 +1029,7 @@ function ProjectPage() {
           onMove={(d) => moveStage(sel.id, d)}
           onAddLog={(k, b, h) => addLog(sel.id, k, b, h)}
           onDeleteLog={deleteLog}
-          onClose={() => setSelected(null)}
+          onClose={() => selectStage(null)}
         />
       )}
 

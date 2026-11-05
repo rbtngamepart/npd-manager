@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase/client";
 import { addDays, diffDays } from "@/lib/dates";
 import type { Profile, Project, ProjectMember, Stage } from "@/lib/types";
 import { displayName } from "./AppProvider";
+import { useUnsaved } from "@/lib/unsaved";
 
 export function ProjectSettings({
   project,
@@ -37,6 +38,15 @@ export function ProjectSettings({
   const [shift, setShift] = useState(true);
   const [busy, setBusy] = useState(false);
   const [addId, setAddId] = useState("");
+
+  const settingsDirty =
+    name !== project.name ||
+    category !== (project.category ?? "") ||
+    description !== (project.description ?? "") ||
+    start !== (project.start_date ?? "") ||
+    pmId !== (project.pm_id ?? "") ||
+    (calReady && tags !== (project.calendar_tags ?? []).join(", "));
+  useUnsaved("project-settings", "프로젝트 정보", canEdit && settingsDirty);
 
   const approved = profiles.filter((p) => p.approved);
   const memberIds = new Set(members.map((m) => m.user_id));
