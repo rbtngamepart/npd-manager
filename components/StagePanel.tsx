@@ -958,13 +958,15 @@ export function StagePanel({
 
       {canEdit && (
         <div className="flex items-center gap-2 border-t border-black/[0.06] bg-slate-50/80 px-5 py-3" data-tour="sp-save">
-          <Tip content="단계를 지웁니다. 진행 기록은 프로젝트 [기록] 탭에 남고, 하위 단계는 한 칸 위로 올라가요.">
-            <button className="btn-danger -ml-2 px-2 text-xs" onClick={onDelete}>
-              단계 삭제
-            </button>
-          </Tip>
           <span className="min-w-0 truncate text-xs text-slate-400">{dirty ? "저장하지 않은 변경사항이 있습니다" : `최근 수정 ${short(stage.updated_at.slice(0, 10))}`}</span>
-          <button className="btn-ghost ml-auto shrink-0" disabled={!dirty} onClick={() => setF(base)}>
+          <span className="ml-auto shrink-0">
+            <Tip content="단계를 지웁니다. 진행 기록은 프로젝트 [기록] 탭에 남고, 하위 단계는 한 칸 위로 올라가요.">
+              <button className="btn text-rose-600 hover:bg-rose-50" onClick={onDelete}>
+                단계 삭제
+              </button>
+            </Tip>
+          </span>
+          <button className="btn-ghost shrink-0" disabled={!dirty} onClick={() => setF(base)}>
             되돌리기
           </button>
           <button className="btn-primary" disabled={!dirty || saving} onClick={save}>
