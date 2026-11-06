@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fromJiraWebhook, ingest, noteWebhook, webhookKey } from "@/lib/atlassian/server";
+import { checkWebhookKey, fromJiraWebhook, ingest, noteWebhook, webhookKey } from "@/lib/atlassian/server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 26;
@@ -13,7 +13,8 @@ export async function POST(req: Request) {
   const want = webhookKey();
   const got = req.headers.get("x-npd-key") ?? new URL(req.url).searchParams.get("key");
   if (!want) return NextResponse.json({ error: "서버에 ATLASSIAN_WEBHOOK_SECRET(또는 CRON_SECRET)이 설정되지 않았습니다" }, { status: 500 });
-  if (got !== want) return NextResponse.json({ error: "X-NPD-Key 값이 맞지 않습니다" }, { status: 401 });
+  const chk = checkWebhookKey(got);
+  if (!chk.ok) return NextResponse.json({ error: "X-NPD-Key 값이 맞지 않습니다", hint: chk.hint }, { status: 401 });
   try {
     const raw = await req.text();
     let body: Record<string, unknown>;

@@ -97,7 +97,22 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
 // 지라 자동화(Automation) 웹훅
 // ---------------------------------------------------------------------
 export function webhookKey(): string | null {
-  return process.env.ATLASSIAN_WEBHOOK_SECRET || process.env.CRON_SECRET || null;
+  return process.env.ATLASSIAN_WEBHOOK_SECRET?.trim() || process.env.CRON_SECRET?.trim() || null;
+}
+
+/** 지라가 보낸 X-NPD-Key 확인: ATLASSIAN_WEBHOOK_SECRET 또는 CRON_SECRET 중 하나와 같으면 통과 (앞뒤 공백 무시) */
+export function checkWebhookKey(got: string | null): { ok: boolean; hint: string } {
+  const a = process.env.ATLASSIAN_WEBHOOK_SECRET?.trim();
+  const c = process.env.CRON_SECRET?.trim();
+  const g = got?.trim() ?? "";
+  if (g && (g === a || g === c)) return { ok: true, hint: "" };
+  const set = [a && "ATLASSIAN_WEBHOOK_SECRET", c && "CRON_SECRET"].filter(Boolean).join(", ");
+  return {
+    ok: false,
+    hint: !g
+      ? "X-NPD-Key 머리글이 비어 있습니다."
+      : `X-NPD-Key 값이 서버의 ${set || "비밀값"}과 다릅니다. Netlify 값을 바꿨다면 다시 배포(Deploy project)해야 적용되고, 배포 환경(Production 등)마다 값이 다르면 Production 값을 넣으세요.`,
+  };
 }
 
 export function fromJiraWebhook(b: Record<string, unknown>): ExtItem | null {
