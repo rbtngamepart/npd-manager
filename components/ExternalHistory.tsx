@@ -20,6 +20,8 @@ interface Item {
   ext_status: string | null;
   created_at: string;
   edited_at: string | null;
+  ext_detached_at?: string | null;
+  ext_deleted_at?: string | null;
   stages: { name: string; ref_code: string | null } | null;
   projects: { name: string } | null;
 }
@@ -30,7 +32,7 @@ const KIND_LABEL: Record<string, { t: string; c: string }> = {
   issue: { t: "이슈", c: "bg-rose-50 text-rose-700" },
 };
 
-const when = (i: Item) => i.edited_at ?? i.created_at;
+const when = (i: Item) => [i.edited_at, i.ext_detached_at, i.created_at].filter(Boolean).sort().pop()!;
 
 export function ExternalHistory() {
   const [items, setItems] = useState<Item[] | null>(null);
@@ -40,7 +42,7 @@ export function ExternalHistory() {
 
   const load = useCallback(async () => {
     const sb = supabase();
-    const cols = "id,project_id,stage_id,stage_name,kind,body,source,ext_key,ext_url,ext_title,ext_status,created_at,edited_at,stages(name,ref_code),projects(name)";
+    const cols = "*,stages(name,ref_code),projects(name)";
     const base = () => {
       let q = sb.from("stage_logs").select(cols).not("source", "is", null);
       if (src !== "all") q = q.eq("source", src);
@@ -53,7 +55,7 @@ export function ExternalHistory() {
     ]);
     if (a.error || b.error) return setErr((a.error ?? b.error)!.message);
     const map = new Map<string, Item>();
-    [...((a.data ?? []) as unknown as Item[]), ...((b.data ?? []) as unknown as Item[])].forEach((x) => map.set(x.id, x));
+    [...((a.data ?? []) as unknown as Item[]), ...((b.data ?? []) as unknown as Item[])].filter((x) => !x.ext_deleted_at).forEach((x) => map.set(x.id, x));
     setItems(Array.from(map.values()).sort((x, y) => when(y).localeCompare(when(x))).slice(0, limit));
   }, [limit, src]);
 
@@ -124,9 +126,15 @@ export function ExternalHistory() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="rounded bg-slate-900 px-1.5 py-px text-[10px] text-white">{i.source === "jira" ? "Jira" : "Confluence"}</span>
                         <span className={`rounded px-1.5 py-px text-[10px] ${k.c}`}>{k.t}</span>
-                        <span className={`rounded px-1.5 py-px text-[10px] ${updated ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
-                          {updated ? "업데이트" : "새로 수집"}
-                        </span>
+                        {i.ext_detached_at ? (
+                          <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] text-amber-800" title="원문에서 단계 코드가 지워짐">
+                            연결 해제됨
+                          </span>
+                        ) : (
+                          <span className={`rounded px-1.5 py-px text-[10px] ${updated ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
+                            {updated ? "업데이트" : "새로 수집"}
+                          </span>
+                        )}
                         {i.ext_url ? (
                           <a href={i.ext_url} target="_blank" rel="noopener noreferrer" className="min-w-0 truncate font-medium hover:underline">
                             {i.ext_title ?? i.ext_key}

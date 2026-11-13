@@ -510,24 +510,67 @@ export function StageDeps({
 // ---------------------------------------------------------------------
 // 지라·컨플루언스에서 이 단계를 언급한 곳
 // ---------------------------------------------------------------------
-export function StageExternal({ logs }: { logs: StageLog[] }) {
+export function StageExternal({ logs, canEdit, onHide }: { logs: StageLog[]; canEdit?: boolean; onHide?: (ids: string[]) => void }) {
+  const [showOff, setShowOff] = useState(false);
   const refs = logs.filter((l) => l.source && l.ext_url && !l.ext_key?.includes("#"));
   if (!refs.length) return null;
+  const on = refs.filter((l) => !l.ext_detached_at);
+  const off = refs.filter((l) => l.ext_detached_at);
+  // 이 이슈·문서에서 들어온 기록 전부 (결정·이슈 줄 포함)
+  const idsOf = (l: StageLog) => logs.filter((x) => x.source === l.source && x.ext_key && (x.ext_key === l.ext_key || x.ext_key.startsWith(`${l.ext_key}#`))).map((x) => x.id);
+  const remove = (l: StageLog) => {
+    const ids = idsOf(l);
+    if (
+      onHide &&
+      confirm(
+        `'${l.ext_title ?? "이 연결"}'에서 들어온 기록 ${ids.length}건을 이 단계에서 지울까요?\n원문은 그대로이고, 원문에 코드가 남아 있어도 다시 수집하지 않습니다.`
+      )
+    )
+      onHide(ids);
+  };
+  const Item = ({ l }: { l: StageLog }) => (
+    <li className={`group flex items-center gap-2 rounded-lg border border-black/[0.07] px-2 py-1.5 text-sm ${l.ext_detached_at ? "opacity-60" : ""}`}>
+      <span>{l.source === "jira" ? "🟦" : "📘"}</span>
+      <a href={l.ext_url!} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate hover:underline" title={l.body}>
+        {l.ext_title ?? l.body}
+      </a>
+      {l.ext_detached_at ? (
+        <Tip content={`원문에서 단계 코드가 지워져 ${relativeTime(l.ext_detached_at)}부터 연결 해제됨. 코드를 다시 적으면 다시 연결돼요.`}>
+          <span tabIndex={0} className="shrink-0 cursor-help rounded bg-amber-50 px-1.5 text-[11px] text-amber-700">
+            연결 해제됨
+          </span>
+        </Tip>
+      ) : (
+        l.ext_status && <span className="shrink-0 rounded bg-slate-100 px-1.5 text-[11px] text-slate-600">{l.ext_status}</span>
+      )}
+      <span className="shrink-0 text-[10px] text-slate-400">{relativeTime(l.edited_at ?? l.created_at)}</span>
+      {canEdit && onHide && (
+        <button className="hidden shrink-0 px-1 text-[11px] text-rose-400 hover:text-rose-600 group-hover:inline" onClick={() => remove(l)} title="이 단계에서 지우기">
+          ✕
+        </button>
+      )}
+    </li>
+  );
   return (
     <section className="space-y-2" data-tour="sp-external">
-      <Head title="지라·컨플루언스에서 언급" hint={`${refs.length}건`} />
+      <Head
+        title="지라·컨플루언스에서 언급"
+        hint={`${on.length}건`}
+        right={
+          off.length > 0 && (
+            <button className="text-[11px] text-slate-400 hover:text-ink" onClick={() => setShowOff((v) => !v)}>
+              연결 해제됨 {off.length}건 {showOff ? "숨기기" : "보기"}
+            </button>
+          )
+        }
+      />
       <ul className="space-y-1">
-        {refs.map((l) => (
-          <li key={l.id} className="flex items-center gap-2 rounded-lg border border-black/[0.07] px-2 py-1.5 text-sm">
-            <span>{l.source === "jira" ? "🟦" : "📘"}</span>
-            <a href={l.ext_url!} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate hover:underline" title={l.body}>
-              {l.ext_title ?? l.body}
-            </a>
-            {l.ext_status && <span className="shrink-0 rounded bg-slate-100 px-1.5 text-[11px] text-slate-600">{l.ext_status}</span>}
-            <span className="shrink-0 text-[10px] text-slate-400">{relativeTime(l.edited_at ?? l.created_at)}</span>
-          </li>
+        {on.map((l) => (
+          <Item key={l.id} l={l} />
         ))}
+        {showOff && off.map((l) => <Item key={l.id} l={l} />)}
       </ul>
+      {on.length === 0 && !showOff && <p className="text-xs text-slate-400">지금 연결된 이슈·문서가 없습니다.</p>}
     </section>
   );
 }

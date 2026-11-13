@@ -31,38 +31,88 @@ function fingerprint(s: string): string {
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const short = (d?: string | null) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : null);
 
-/** 글 하나 처리: 언급된 단계마다 '참조' 기록 1개 + '결정:'/'이슈:' 줄마다 기록 */
-export async function ingest(item: ExtItem): Promise<{ codes: number; stages: number; written: number; notified?: number }> {
-  const mentions = findMentions(item.title, item.text);
-  if (!mentions.length) return { codes: 0, stages: 0, written: 0 };
+// DB 업데이트 확인 결과는 잠깐 기억 (문서마다 묻지 않게)
+let features: { at: number; v12: boolean; hashReady: boolean } | null = null;
+async function dbFeatures() {
+  if (features && Date.now() - features.at < 10 * 60 * 1000) return features;
   const db = supabaseAdmin();
-  const { data: stages, error } = await db
-    .from("stages")
-    .select("id,project_id,name,ref_code")
-    .in(
-      "ref_code",
-      mentions.map((m) => m.code)
-    );
-  if (error) throw error;
-  if (!stages?.length) return { codes: mentions.length, stages: 0, written: 0 };
+  const [a, b] = await Promise.all([
+    db.from("stage_logs").select("ext_detached_at,ext_deleted_at").limit(1),
+    db.from("stage_logs").select("ext_hash").limit(1),
+  ]);
+  features = { at: Date.now(), v12: !a.error, hashReady: !b.error };
+  return features;
+}
+
+/** 글 하나 처리: 언급된 단계마다 '참조' 기록 1개 + '결정:'/'이슈:' 줄마다 기록 */
+export async function ingest(item: ExtItem): Promise<{ codes: number; stages: number; written: number; notified?: number; detached?: number }> {
+  const mentions = findMentions(item.title, item.text);
+  const db = supabaseAdmin();
+  const base = `${item.source}:${item.key}`;
+  const now = new Date().toISOString();
+
+  // DB 업데이트 확인: 010(ext_hash), 012(연결 해제·삭제 표시)
+  const { v12, hashReady } = await dbFeatures();
+
+  // 이 이슈·문서에서 예전에 들어온 기록 (모든 단계)
+  type Row = {
+    id: string;
+    stage_id: string | null;
+    ext_key: string;
+    body: string;
+    ext_status: string | null;
+    ext_title: string | null;
+    ext_hash?: string | null;
+    ext_detached_at?: string | null;
+    ext_deleted_at?: string | null;
+  };
+  const { data: prevData } = await db.from("stage_logs").select("*").eq("source", item.source).like("ext_key", `${base}%`);
+  const prev = ((prevData ?? []) as unknown as Row[]).filter((r) => r.ext_key === base || r.ext_key.startsWith(`${base}#`));
+
+  let stages: { id: string; project_id: string; name: string; ref_code: string }[] = [];
+  if (mentions.length) {
+    const { data, error } = await db
+      .from("stages")
+      .select("id,project_id,name,ref_code")
+      .in(
+        "ref_code",
+        mentions.map((m) => m.code)
+      );
+    if (error) throw error;
+    stages = (data ?? []) as typeof stages;
+  }
+
+  // 코드가 빠진 단계: '연결 해제됨'으로 표시 (기록은 남김)
+  let detached = 0;
+  const detach = async (ids: string[]) => {
+    if (!v12 || !ids.length) return;
+    const { error } = await db.from("stage_logs").update({ ext_detached_at: now, edited_at: now }).in("id", ids);
+    if (!error) detached += ids.length;
+  };
+  const mentioned = new Set(stages.map((s) => s.id));
+  await detach(prev.filter((r) => r.stage_id && !mentioned.has(r.stage_id) && !r.ext_detached_at && !r.ext_deleted_at).map((r) => r.id));
+
+  if (!stages.length) return { codes: mentions.length, stages: 0, written: 0, detached };
 
   const label = item.source === "jira" ? item.key : "컨플루언스";
   const meta = [item.status && `상태 ${item.status}`, item.assignee && `담당 ${item.assignee}`, short(item.due) && `기한 ${short(item.due)}`]
     .filter(Boolean)
     .join(" · ");
   const extTitle = item.source === "jira" ? `${item.key} ${item.title}` : item.title;
-  const base = `${item.source}:${item.key}`;
   let written = 0;
   // 변경 감지용 지문: "본문|댓글"
   const mainHash = shortHash([item.title, item.status ?? "", fingerprint(item.description ?? item.text)].join("|"));
   const commentHash = item.lastComment?.trim() ? shortHash(fingerprint(item.lastComment)) : null;
   const changes: StageChange[] = [];
-  // ext_hash 칸(업데이트 010)이 있는지
-  const probe = await db.from("stage_logs").select("ext_hash").limit(1);
-  const hashReady = !probe.error;
 
   for (const st of stages) {
     const m = mentions.find((x) => x.code === st.ref_code)!;
+    const list = prev.filter((r) => r.stage_id === st.id);
+    const byKey = new Map(list.map((e) => [e.ext_key, e]));
+    const ref = byKey.get(base);
+    // NPD에서 지운 연결은 다시 수집하지 않음
+    if (ref?.ext_deleted_at) continue;
+
     const rows: Record<string, unknown>[] = [];
     // 참조 기록
     const excerpt = m.lines.map(cleanLine).filter(Boolean).slice(0, 3);
@@ -90,19 +140,10 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
       });
     }
 
-    const { data: existing } = await db
-      .from("stage_logs")
-      .select(hashReady ? "id,ext_key,body,ext_status,ext_title,ext_hash" : "id,ext_key,body,ext_status,ext_title")
-      .eq("stage_id", st.id)
-      .like("ext_key", `${base}%`);
-    const list = (existing ?? []) as unknown as { id: string; ext_key: string; body: string; ext_status: string | null; ext_title: string | null; ext_hash?: string | null }[];
-    const byKey = new Map(list.map((e) => [e.ext_key, e]));
-
     // 이 단계 기준으로 무엇이 바뀌었나
-    const ref = byKey.get(base);
     const [oldMain, oldComment] = (ref?.ext_hash ?? "").split(":");
     const kinds: StageChange["kinds"] = [];
-    if (!ref) kinds.push("new");
+    if (!ref || ref.ext_detached_at) kinds.push("new"); // 처음 연결 또는 다시 연결
     else if (hashReady && ref.ext_hash) {
       const oldSt = (ref.ext_status ?? "").split(" · ")[0];
       if (item.source === "jira" && item.status && item.status !== oldSt) kinds.push("status");
@@ -114,24 +155,35 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
 
     for (const r of rows) {
       const old = byKey.get(r.ext_key as string);
-      const common = { ...r, source: item.source, ext_url: item.url, stage_name: st.name };
+      if (old?.ext_deleted_at) continue; // NPD에서 지운 줄은 다시 만들지 않음
+      const common = { ...r, source: item.source, ext_url: item.url, stage_name: st.name, ...(v12 ? { ext_detached_at: null } : {}) };
       if (!old) {
         const { error: e } = await db.from("stage_logs").insert({ ...common, project_id: st.project_id, stage_id: st.id, author_id: null });
         if (e) throw e;
         written++;
-      } else if (old.body !== r.body || old.ext_status !== r.ext_status || old.ext_title !== r.ext_title || (r.ext_hash !== undefined && old.ext_hash !== r.ext_hash)) {
-        const { error: e } = await db.from("stage_logs").update({ ...common, edited_at: new Date().toISOString() }).eq("id", old.id);
+      } else if (
+        old.body !== r.body ||
+        old.ext_status !== r.ext_status ||
+        old.ext_title !== r.ext_title ||
+        (r.ext_hash !== undefined && old.ext_hash !== r.ext_hash) ||
+        !!old.ext_detached_at
+      ) {
+        const { error: e } = await db.from("stage_logs").update({ ...common, edited_at: now }).eq("id", old.id);
         if (e) throw e;
         written++;
       }
     }
+
+    // 글에서 지워진 '결정:'·'이슈:' 줄도 연결 해제로
+    const keep = new Set(rows.map((r) => r.ext_key as string));
+    await detach(list.filter((r) => r.ext_key.startsWith(`${base}#`) && !keep.has(r.ext_key) && !r.ext_detached_at && !r.ext_deleted_at).map((r) => r.id));
   }
   try {
     await notifyChange(item, changes);
   } catch (e) {
     console.error("슬랙 알림 실패", e);
   }
-  return { codes: mentions.length, stages: stages.length, written, notified: changes.length };
+  return { codes: mentions.length, stages: stages.length, written, notified: changes.length, detached };
 }
 
 // ---------------------------------------------------------------------
@@ -270,14 +322,18 @@ export async function pollJira() {
   try {
     const mins = await windowMinutes("jira");
     const jql = `text ~ "NPD*" AND updated >= -${mins}m ORDER BY updated DESC`;
-    let token: string | undefined;
     let issues = 0;
     let written = 0;
+    const seen = new Set<string>();
+    const run = async (query: string) => {
+    let token: string | undefined;
     for (let guard = 0; guard < 6; guard++) {
-      const q = new URLSearchParams({ jql, fields: "summary,status,assignee,duedate,description,comment", maxResults: "50" });
+      const q = new URLSearchParams({ jql: query, fields: "summary,status,assignee,duedate,description,comment", maxResults: "50" });
       if (token) q.set("nextPageToken", token);
       const j = await getJson(`https://${c.site}/rest/api/3/search/jql?${q}`, c.auth);
       for (const it of (j.issues ?? []) as { key: string; fields: Record<string, unknown> }[]) {
+        if (seen.has(it.key)) continue;
+        seen.add(it.key);
         issues++;
         const f = it.fields;
         const comments = ((f.comment as { comments?: { body: unknown }[] } | undefined)?.comments ?? []).map((x) => adfToText(x.body));
@@ -297,6 +353,22 @@ export async function pollJira() {
       }
       token = j.nextPageToken;
       if (!token || j.isLast) break;
+    }
+    };
+    await run(jql);
+
+    // 이미 연결된 이슈는 코드를 지웠을 수 있으니 따로 다시 확인 (코드가 없으면 위 검색에 안 걸림)
+    const db = supabaseAdmin();
+    const linked = await db.from("stage_logs").select("ext_key").eq("source", "jira").is("ext_detached_at", null).is("ext_deleted_at", null).not("ext_key", "like", "%#%");
+    if (!linked.error) {
+      const keys = Array.from(new Set((linked.data ?? []).map((r) => String(r.ext_key).replace(/^jira:/, "")))).filter((k) => /^[A-Z][A-Z0-9_]+-\d+$/.test(k) && !seen.has(k));
+      for (let i = 0; i < keys.length; i += 40) {
+        try {
+          await run(`key in (${keys.slice(i, i + 40).join(",")}) AND updated >= -${mins}m`);
+        } catch {
+          /* 지워진 이슈가 섞이면 지라가 거부함 — 다음 묶음은 계속 */
+        }
+      }
     }
     const out = { last_ok: started, window_min: mins, issues, written, error: null };
     await saveState("jira", out);

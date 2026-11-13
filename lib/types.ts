@@ -84,6 +84,9 @@ export interface StageLog {
   ext_url?: string | null;
   ext_title?: string | null;
   ext_status?: string | null;
+  /** 012 업데이트 후: 원문에서 단계 코드가 빠짐 / NPD에서 지움 */
+  ext_detached_at?: string | null;
+  ext_deleted_at?: string | null;
 }
 
 export interface StageGroup {

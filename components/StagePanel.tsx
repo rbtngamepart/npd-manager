@@ -159,6 +159,7 @@ export function StagePanel({
   onAddLog,
   onUpdateLog,
   onDeleteLog,
+  onHideExt,
   onChanged,
   onOpenStage,
   onClose,
@@ -190,6 +191,8 @@ export function StagePanel({
   onAddLog: (kind: LogKind, body: string, html: string | null) => Promise<void>;
   onUpdateLog: (id: string, body: string, html: string) => Promise<void>;
   onDeleteLog: (id: string) => void;
+  /** 지라·컨플루언스에서 수집된 기록 지우기 (다시 수집하지 않음) */
+  onHideExt?: (ids: string[]) => void;
   onChanged: () => void;
   onOpenStage: (id: string) => void;
   onClose: () => void;
@@ -746,7 +749,7 @@ export function StagePanel({
         />
       )}
       {links && <StageLinks projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
-      <StageExternal logs={logs} />
+      <StageExternal logs={logs} canEdit={canEdit} onHide={onHideExt} />
 
       {calEvents.length > 0 && (
         <section className="space-y-2" data-tour="sp-cal-events">
@@ -825,14 +828,29 @@ export function StagePanel({
               const editable = l.kind !== "change" && !l.source;
               const isEditing = editLog?.id === l.id;
               return (
-                <li key={l.id} className="group text-sm">
+                <li key={l.id} className={`group text-sm ${l.ext_detached_at ? "opacity-60" : ""}`}>
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
                     <span className={`rounded px-1.5 py-px ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
                     {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
+                    {l.source && l.ext_detached_at && (
+                      <Tip content="지라·컨플루언스 원문에서 이 단계 코드가 지워졌습니다. 기록은 남겨두고 더 이상 갱신하지 않아요. 코드를 다시 적으면 다시 연결됩니다.">
+                        <span tabIndex={0} className="cursor-help rounded bg-amber-50 px-1.5 py-px text-amber-700">연결 해제됨</span>
+                      </Tip>
+                    )}
                     <span>{l.source ? "자동 수집" : l.author_id ? displayName(profileById[l.author_id]) : "시스템"}</span>
                     <span>·</span>
                     <span title={new Date(l.created_at).toLocaleString("ko-KR")}>{relativeTime(l.created_at)}</span>
                     {l.edited_at && <span title={new Date(l.edited_at).toLocaleString("ko-KR")}>(수정됨)</span>}
+                    {l.source && canEdit && onHideExt && (
+                      <span className="ml-auto hidden group-hover:flex">
+                        <button
+                          className="text-rose-500"
+                          onClick={() => confirm("이 수집 기록을 지울까요?\n지라·컨플루언스 원문은 그대로이고, 이 기록은 다시 수집되지 않습니다.") && onHideExt([l.id])}
+                        >
+                          삭제
+                        </button>
+                      </span>
+                    )}
                     {mine && editable && !isEditing && (
                       <span className="ml-auto hidden gap-2 group-hover:flex">
                         {v8 && (

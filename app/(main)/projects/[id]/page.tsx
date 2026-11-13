@@ -115,7 +115,7 @@ function ProjectPage() {
     setProject(p.data as Project | null);
     setMemo((p.data as Project | null)?.pm_memo ?? "");
     setStages((s.data ?? []) as Stage[]);
-    setLogs((l.data ?? []) as StageLog[]);
+    setLogs(((l.data ?? []) as StageLog[]).filter((x) => !x.ext_deleted_at)); // NPD에서 지운 수집 기록은 숨김
     setMembers((m.data ?? []) as ProjectMember[]);
     const [ce, g, c, lk, d] = await Promise.all([
       sb.from("calendar_events").select("*").eq("project_id", id),
@@ -371,6 +371,13 @@ function ProjectPage() {
       .from("stage_logs")
       .insert({ project_id: id, stage_id: sid, stage_name: s?.name, kind, body, author_id: me?.id, ...(html ? { body_html: html } : {}) });
     if (error) return toast(error.message);
+    load();
+  }
+
+  async function hideExt(ids: string[]) {
+    const { data, error } = await supabase().rpc("ext_log_hide", { p_ids: ids });
+    if (error) return toast(/ext_log_hide/.test(error.message) ? "DB 업데이트(012_ext_detach.sql)가 필요합니다" : `실패: ${error.message}`);
+    toast(`수집 기록 ${data ?? ids.length}건을 지웠습니다`);
     load();
   }
 
@@ -968,7 +975,7 @@ function ProjectPage() {
                     ? [groups ? groupPath(effectiveGroup(st, stages), groups) : "", stagePath(st, stages)].filter(Boolean).join(" › ")
                     : "";
                   return (
-                    <li key={l.id} className="relative">
+                    <li key={l.id} className={`relative ${l.ext_detached_at ? "opacity-60" : ""}`}>
                       <span
                         className={`absolute -left-[25px] top-1.5 h-2 w-2 rounded-full ${
                           l.kind === "issue" ? "bg-rose-500" : l.kind === "decision" ? "bg-violet-500" : l.kind === "change" ? "bg-sky-400" : "bg-slate-400"
@@ -977,6 +984,13 @@ function ProjectPage() {
                       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-400">
                         <span className={`rounded px-1.5 py-px text-[11px] ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
                         {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-[11px] text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
+                        {l.source && l.ext_detached_at && (
+                          <Tip content="지라·컨플루언스 원문에서 이 단계 코드가 지워졌습니다. 기록은 남겨두고 더 이상 갱신하지 않아요.">
+                            <span tabIndex={0} className="cursor-help rounded bg-amber-50 px-1.5 py-px text-[11px] text-amber-700">
+                              연결 해제됨
+                            </span>
+                          </Tip>
+                        )}
                         {path && <span className="text-slate-400">{path} ›</span>}
                         <button className="font-medium text-slate-600 hover:underline" onClick={() => l.stage_id && selectStage(l.stage_id)}>
                           {st?.name ?? l.stage_name ?? "(삭제된 단계)"}
@@ -987,6 +1001,14 @@ function ProjectPage() {
                           {new Date(l.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                           {l.edited_at && " (수정됨)"}
                         </span>
+                        {l.source && canEdit && (
+                          <button
+                            className="ml-1 text-[11px] text-rose-400 hover:text-rose-600"
+                            onClick={() => confirm("이 수집 기록을 지울까요?\n지라·컨플루언스 원문은 그대로이고, 이 기록은 다시 수집되지 않습니다.") && hideExt([l.id])}
+                          >
+                            삭제
+                          </button>
+                        )}
                       </div>
                       {l.body_html ? (
                         <RichView
@@ -1041,6 +1063,7 @@ function ProjectPage() {
           links={links && links.filter((x) => x.stage_id === sel.id)}
           deps={deps}
           onUpdateLog={updateLog}
+          onHideExt={hideExt}
           onChanged={load}
           onOpenStage={selectStage}
           onCopy={copy}
