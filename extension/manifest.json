@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "NPD 캘린더 도우미",
+  "short_name": "NPD",
+  "version": "1.0.0",
+  "description": "구글 캘린더 일정 제목에 NPD 프로젝트 말머리와 단계를 골라 넣습니다.",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "permissions": ["storage"],
+  "host_permissions": ["https://*.netlify.app/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://calendar.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": { "default_title": "NPD 캘린더 도우미 설정", "default_icon": { "16": "icons/16.png", "48": "icons/48.png" } },
+  "commands": {
+    "open-picker": {
+      "suggested_key": { "default": "Alt+N", "mac": "Alt+N" },
+      "description": "NPD 단계 고르기 열기"
+    }
+  }
+}

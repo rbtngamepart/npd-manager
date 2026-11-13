@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
 import { Empty, Modal, Toast } from "@/components/ui";
 import { buildAppsScript } from "@/lib/calendar/appsScript";
+import { ExtensionSetup } from "@/components/ExtensionSetup";
 import { relativeTime, short } from "@/lib/dates";
 import { normTag } from "@/lib/calendar/text";
 import { runCalendarSync, summaryText, type SyncSummary } from "@/lib/calendar/client";
@@ -248,6 +249,8 @@ export default function CalendarPage() {
               말머리는 프로젝트 [설정·권한]의 &lsquo;캘린더 말머리&rsquo;에서 정합니다 (프로젝트 이름과 같으면 자동 연결). 말머리가 없는 일정은 읽지도 저장하지도 않습니다.
             </p>
           </section>
+
+          <ExtensionSetup toast={show} />
 
           {/* 대기함 */}
           <section className="card overflow-hidden" data-tour="cal-inbox">
