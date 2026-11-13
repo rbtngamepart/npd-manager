@@ -181,9 +181,11 @@
   function placeChip() {
     if (!target || !visible(target)) return chip.classList.remove("show");
     const r = target.getBoundingClientRect();
-    chip.style.top = `${Math.max(4, r.top + r.height / 2 - 14)}px`;
-    chip.style.left = `${Math.min(window.innerWidth - 110, r.right + 8)}px`;
     chip.classList.add("show");
+    // 제목 칸 안쪽 오른쪽 끝에 (오른쪽의 [저장] 버튼과 겹치지 않게)
+    const c = chip.getBoundingClientRect();
+    chip.style.top = `${Math.max(4, r.top + (r.height - c.height) / 2)}px`;
+    chip.style.left = `${Math.max(r.left, r.right - c.width - 6)}px`;
   }
   document.addEventListener(
     "focusin",
@@ -524,6 +526,28 @@
     return clone;
   }
 
+  // 그림이 깔린 일정에서 구글 ✎ 아이콘이 배경과 같은 색으로 안 보이는 경우: 옆 버튼(삭제) 아이콘 색에 맞춤
+  function repairEditIcon(edit, bar) {
+    try {
+      const del = Array.from(bar.querySelectorAll("[aria-label]")).find((x) => DELETE_LABELS.test(labelOf(x)));
+      const ref = del && del.querySelector("svg path, svg");
+      const svg = edit.querySelector("svg");
+      if (!ref || !svg) return;
+      if (getComputedStyle(ref).fill === "none") return;
+      const refFill = getComputedStyle(ref).fill;
+      const cs = getComputedStyle(svg);
+      if (cs.display === "none") svg.style.display = "block";
+      if (cs.visibility === "hidden") svg.style.visibility = "visible";
+      if (cs.opacity === "0") svg.style.opacity = "1";
+      svg.querySelectorAll("path, circle, rect, polygon").forEach((el) => {
+        const f = getComputedStyle(el).fill;
+        if (refFill && f !== refFill && el.getAttribute("fill") !== "none") el.style.fill = refFill;
+      });
+    } catch {
+      /* 못 고쳐도 다른 기능은 그대로 */
+    }
+  }
+
   function scanBubbles() {
     const edits = Array.from(document.querySelectorAll('[role="button"][aria-label], button[aria-label]')).filter(
       (el) => EDIT_LABELS.test(labelOf(el)) && !el.closest(".npd-bubble-btn")
@@ -540,6 +564,7 @@
       let anchor = edit;
       while (anchor.parentElement && anchor.parentElement !== bar && anchor.parentElement.children.length === 1) anchor = anchor.parentElement;
       anchor.parentElement.insertBefore(makeBubbleButton(edit, anchor), anchor);
+      repairEditIcon(edit, bar);
     }
   }
 
