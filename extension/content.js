@@ -457,37 +457,57 @@
     });
   }
 
-  function makeBubbleButton(editBtn) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "npd-bubble-btn";
-    b.title = "NPD 단계 고르기 (일정 수정 화면에서 제목에 말머리·단계 넣기)";
-    b.setAttribute("aria-label", "NPD 단계 고르기");
-    b.textContent = "N";
-    const size = Math.round(editBtn.getBoundingClientRect().height) || 40;
-    b.style.cssText = [
-      `width:${size}px`,
-      `height:${size}px`,
-      "min-width:0",
-      "border-radius:50%",
-      "border:0",
-      "margin:0 4px",
-      "padding:0",
-      "background:#e8352c",
-      "color:#fff",
-      "font:800 15px/1 -apple-system,'Segoe UI','Malgun Gothic',sans-serif",
-      "cursor:pointer",
-      "display:inline-flex",
-      "align-items:center",
-      "justify-content:center",
-      "flex:none",
-      "box-shadow:0 1px 3px rgba(0,0,0,.25)",
-      "vertical-align:middle",
-    ].join(";");
-    b.addEventListener("mousedown", (e) => e.stopPropagation());
-    b.addEventListener("click", async (e) => {
+  // 'N' 모양 아이콘 (구글 아이콘처럼 글자색을 따라감)
+  const N_ICON =
+    '<path d="M5 19V5h2.7l6.9 9.7V5H17.4v14h-2.7L7.8 9.3V19z" fill="currentColor"/>' +
+    '<circle cx="19.5" cy="5" r="2.5" fill="#f87171"/>';
+
+  function iconSvg(sizeFrom) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    const sz = sizeFrom ? Math.round(sizeFrom.getBoundingClientRect().width) || 20 : 20;
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", String(sz));
+    svg.setAttribute("height", String(sz));
+    svg.setAttribute("aria-hidden", "true");
+    svg.style.display = "block";
+    svg.innerHTML = N_ICON;
+    return svg;
+  }
+
+  /** 구글의 '수정' 버튼(껍데기 포함)을 복제해서 아이콘만 바꿈 → 크기·색·모양이 옆 버튼과 같음 */
+  function makeBubbleButton(editBtn, anchor) {
+    const clone = anchor.cloneNode(true);
+    clone.classList.add("npd-bubble-btn");
+    // 구글 동작(수정 열기 등)이 붙은 표시는 모두 지움
+    for (const el of [clone, ...clone.querySelectorAll("*")]) {
+      for (const a of Array.from(el.attributes)) {
+        if (/^(id|jsaction|jscontroller|jsname|jsshadow|jsslot|jsmodel|jsdata|data-.*|aria-describedby|aria-labelledby|aria-pressed|href)$/i.test(a.name)) el.removeAttribute(a.name);
+      }
+    }
+    const btn = clone.matches('button, [role="button"]') ? clone : clone.querySelector('button, [role="button"]') || clone;
+    btn.setAttribute("aria-label", "NPD 단계 고르기");
+    btn.setAttribute("title", "NPD 단계 고르기 — 일정 수정 화면에서 제목에 말머리·단계 넣기");
+    btn.setAttribute("tabindex", "0");
+    // 아이콘 바꾸기: 원래 아이콘(svg 또는 아이콘 글꼴) 자리에
+    const oldSvg = btn.querySelector("svg");
+    const iconFont = !oldSvg && Array.from(btn.querySelectorAll("i, span")).find((x) => x.children.length === 0 && x.textContent.trim());
+    if (oldSvg) {
+      const ns = iconSvg(editBtn.querySelector("svg"));
+      for (const a of Array.from(oldSvg.attributes)) if (/^(class|style|focusable)$/.test(a.name)) ns.setAttribute(a.name, a.value);
+      ns.style.display = "block";
+      oldSvg.replaceWith(ns);
+    } else if (iconFont) {
+      iconFont.textContent = "";
+      iconFont.appendChild(iconSvg(null));
+    } else {
+      btn.textContent = "";
+      btn.appendChild(iconSvg(null));
+    }
+    const run = async (e) => {
       e.preventDefault();
       e.stopPropagation();
+      e.stopImmediatePropagation();
       editBtn.click();
       toast("일정 수정 화면을 여는 중…");
       const input = await waitFor(() => findTitleInputs()[0]);
@@ -495,13 +515,18 @@
       target = input;
       input.focus();
       open();
-    });
-    return b;
+    };
+    ["mousedown", "mouseup", "pointerdown", "pointerup", "touchstart"].forEach((t) =>
+      clone.addEventListener(t, (e) => e.stopPropagation(), true)
+    );
+    clone.addEventListener("click", run, true);
+    clone.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && run(e), true);
+    return clone;
   }
 
   function scanBubbles() {
     const edits = Array.from(document.querySelectorAll('[role="button"][aria-label], button[aria-label]')).filter(
-      (el) => EDIT_LABELS.test(labelOf(el)) && visible(el)
+      (el) => EDIT_LABELS.test(labelOf(el)) && !el.closest(".npd-bubble-btn")
     );
     for (const edit of edits) {
       // 같은 버튼 줄에 '삭제'도 있는 경우만 (일정 상세 창)
@@ -510,11 +535,11 @@
         if (bar.querySelector('[aria-label]') && Array.from(bar.querySelectorAll("[aria-label]")).some((x) => DELETE_LABELS.test(labelOf(x)))) break;
         bar = bar.parentElement;
       }
-      if (!bar || bar.querySelector(".npd-bubble-btn")) continue;
-      // 수정 버튼을 감싼 껍데기째로 그 앞에 넣기
+      if (!bar || !visible(bar) || bar.querySelector(".npd-bubble-btn")) continue;
+      // 수정 버튼을 감싼 껍데기째로 복제해서 그 앞에 넣기
       let anchor = edit;
       while (anchor.parentElement && anchor.parentElement !== bar && anchor.parentElement.children.length === 1) anchor = anchor.parentElement;
-      anchor.parentElement.insertBefore(makeBubbleButton(edit), anchor);
+      anchor.parentElement.insertBefore(makeBubbleButton(edit, anchor), anchor);
     }
   }
 
