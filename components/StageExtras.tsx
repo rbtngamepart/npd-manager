@@ -510,10 +510,30 @@ export function StageDeps({
 // ---------------------------------------------------------------------
 // 지라·컨플루언스에서 이 단계를 언급한 곳
 // ---------------------------------------------------------------------
-export function StageExternal({ logs, canEdit, onHide }: { logs: StageLog[]; canEdit?: boolean; onHide?: (ids: string[]) => void }) {
+export function StageExternal({
+  logs,
+  canEdit,
+  onHide,
+  deleted = [],
+  onRestore,
+}: {
+  logs: StageLog[];
+  canEdit?: boolean;
+  onHide?: (ids: string[]) => void;
+  deleted?: StageLog[];
+  onRestore?: (ids: string[]) => void;
+}) {
   const [showOff, setShowOff] = useState(false);
+  const [showDel, setShowDel] = useState(false);
   const refs = logs.filter((l) => l.source && l.ext_url && !l.ext_key?.includes("#"));
-  if (!refs.length) return null;
+  // 지운 연결: 이슈·문서 단위로 (참조 기록이 없으면 결정·이슈 줄로)
+  const delGroups = new Map<string, StageLog[]>();
+  deleted.forEach((d) => {
+    const k = `${d.source}|${(d.ext_key ?? "").split("#")[0]}`;
+    delGroups.set(k, [...(delGroups.get(k) ?? []), d]);
+  });
+  const delList = Array.from(delGroups.values());
+  if (!refs.length && !delList.length) return null;
   const on = refs.filter((l) => !l.ext_detached_at);
   const off = refs.filter((l) => l.ext_detached_at);
   // 이 이슈·문서에서 들어온 기록 전부 (결정·이슈 줄 포함)
@@ -557,11 +577,18 @@ export function StageExternal({ logs, canEdit, onHide }: { logs: StageLog[]; can
         title="지라·컨플루언스에서 언급"
         hint={`${on.length}건`}
         right={
-          off.length > 0 && (
-            <button className="text-[11px] text-slate-400 hover:text-ink" onClick={() => setShowOff((v) => !v)}>
-              연결 해제됨 {off.length}건 {showOff ? "숨기기" : "보기"}
-            </button>
-          )
+          <span className="flex gap-2">
+            {off.length > 0 && (
+              <button className="text-[11px] text-slate-400 hover:text-ink" onClick={() => setShowOff((v) => !v)}>
+                연결 해제됨 {off.length}건 {showOff ? "숨기기" : "보기"}
+              </button>
+            )}
+            {delList.length > 0 && canEdit && (
+              <button className="text-[11px] text-slate-400 hover:text-ink" onClick={() => setShowDel((v) => !v)}>
+                지운 연결 {delList.length}건 {showDel ? "숨기기" : "보기"}
+              </button>
+            )}
+          </span>
         }
       />
       <ul className="space-y-1">
@@ -571,6 +598,28 @@ export function StageExternal({ logs, canEdit, onHide }: { logs: StageLog[]; can
         {showOff && off.map((l) => <Item key={l.id} l={l} />)}
       </ul>
       {on.length === 0 && !showOff && <p className="text-xs text-slate-400">지금 연결된 이슈·문서가 없습니다.</p>}
+      {showDel && canEdit && (
+        <div className="space-y-1 rounded-lg bg-slate-50 p-2">
+          <p className="text-[11px] text-slate-500">NPD에서 지운 연결입니다. 원문에 코드가 있어도 수집하지 않아요. 되살리면 다시 보이고 이후 변경도 반영됩니다.</p>
+          <ul className="space-y-1">
+            {delList.map((g) => {
+              const ref = g.find((x) => !x.ext_key?.includes("#")) ?? g[0];
+              return (
+                <li key={ref.id} className="flex items-center gap-2 text-sm text-slate-500">
+                  <span>{ref.source === "jira" ? "🟦" : "📘"}</span>
+                  <span className="min-w-0 flex-1 truncate line-through decoration-slate-300">{ref.ext_title ?? ref.body.split("\n")[0]}</span>
+                  <span className="shrink-0 text-[10px]">{g.length}건 · {ref.ext_deleted_at ? relativeTime(ref.ext_deleted_at) : ""} 지움</span>
+                  {onRestore && (
+                    <button className="shrink-0 rounded border border-black/10 bg-white px-1.5 py-0.5 text-[11px] text-slate-700 hover:border-brand-500 hover:text-brand-600" onClick={() => onRestore(g.map((x) => x.id))}>
+                      되살리기
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

@@ -91,6 +91,12 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
   };
   const mentioned = new Set(stages.map((s) => s.id));
   await detach(prev.filter((r) => r.stage_id && !mentioned.has(r.stage_id) && !r.ext_detached_at && !r.ext_deleted_at).map((r) => r.id));
+  // NPD에서 지운 연결인데 원문에서도 코드가 빠졌으면 '지운 표시'를 풀어줌 (아예 지움 → 다시 적으면 새로 수집)
+  const release = async (ids: string[]) => {
+    if (!v12 || !ids.length) return;
+    await db.from("stage_logs").delete().in("id", ids);
+  };
+  await release(prev.filter((r) => r.stage_id && !mentioned.has(r.stage_id) && r.ext_deleted_at).map((r) => r.id));
 
   if (!stages.length) return { codes: mentions.length, stages: 0, written: 0, detached };
 
@@ -177,6 +183,7 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
     // 글에서 지워진 '결정:'·'이슈:' 줄도 연결 해제로
     const keep = new Set(rows.map((r) => r.ext_key as string));
     await detach(list.filter((r) => r.ext_key.startsWith(`${base}#`) && !keep.has(r.ext_key) && !r.ext_detached_at && !r.ext_deleted_at).map((r) => r.id));
+    await release(list.filter((r) => r.ext_key.startsWith(`${base}#`) && !keep.has(r.ext_key) && r.ext_deleted_at).map((r) => r.id));
   }
   try {
     await notifyChange(item, changes);
@@ -359,7 +366,7 @@ export async function pollJira() {
 
     // 이미 연결된 이슈는 코드를 지웠을 수 있으니 따로 다시 확인 (코드가 없으면 위 검색에 안 걸림)
     const db = supabaseAdmin();
-    const linked = await db.from("stage_logs").select("ext_key").eq("source", "jira").is("ext_detached_at", null).is("ext_deleted_at", null).not("ext_key", "like", "%#%");
+    const linked = await db.from("stage_logs").select("ext_key").eq("source", "jira").is("ext_detached_at", null).not("ext_key", "like", "%#%");
     if (!linked.error) {
       const keys = Array.from(new Set((linked.data ?? []).map((r) => String(r.ext_key).replace(/^jira:/, "")))).filter((k) => /^[A-Z][A-Z0-9_]+-\d+$/.test(k) && !seen.has(k));
       for (let i = 0; i < keys.length; i += 40) {

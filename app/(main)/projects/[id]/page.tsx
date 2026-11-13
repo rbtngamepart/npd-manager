@@ -45,6 +45,7 @@ function ProjectPage() {
   const [calSyncing, setCalSyncing] = useState(false);
   // 008 업데이트 후 (전이면 null)
   const [groups, setGroups] = useState<StageGroup[] | null>(null);
+  const [deletedExt, setDeletedExt] = useState<StageLog[]>([]);
   const [checks, setChecks] = useState<StageCheck[] | null>(null);
   const [links, setLinks] = useState<StageLink[] | null>(null);
   const [deps, setDeps] = useState<StageDep[] | null>(null);
@@ -116,6 +117,7 @@ function ProjectPage() {
     setMemo((p.data as Project | null)?.pm_memo ?? "");
     setStages((s.data ?? []) as Stage[]);
     setLogs(((l.data ?? []) as StageLog[]).filter((x) => !x.ext_deleted_at)); // NPD에서 지운 수집 기록은 숨김
+    setDeletedExt(((l.data ?? []) as StageLog[]).filter((x) => !!x.ext_deleted_at));
     setMembers((m.data ?? []) as ProjectMember[]);
     const [ce, g, c, lk, d] = await Promise.all([
       sb.from("calendar_events").select("*").eq("project_id", id),
@@ -378,6 +380,13 @@ function ProjectPage() {
     const { data, error } = await supabase().rpc("ext_log_hide", { p_ids: ids });
     if (error) return toast(/ext_log_hide/.test(error.message) ? "DB 업데이트(012_ext_detach.sql)가 필요합니다" : `실패: ${error.message}`);
     toast(`수집 기록 ${data ?? ids.length}건을 지웠습니다`);
+    load();
+  }
+
+  async function restoreExt(ids: string[]) {
+    const { data, error } = await supabase().rpc("ext_log_restore", { p_ids: ids });
+    if (error) return toast(/ext_log_restore/.test(error.message) ? "DB 업데이트(013_ext_restore.sql)가 필요합니다" : `실패: ${error.message}`);
+    toast(`수집 기록 ${data ?? ids.length}건을 되살렸습니다. 원문이 바뀌면 다시 갱신돼요`);
     load();
   }
 
@@ -1064,6 +1073,8 @@ function ProjectPage() {
           deps={deps}
           onUpdateLog={updateLog}
           onHideExt={hideExt}
+          deletedExt={deletedExt.filter((x) => x.stage_id === sel.id)}
+          onRestoreExt={restoreExt}
           onChanged={load}
           onOpenStage={selectStage}
           onCopy={copy}

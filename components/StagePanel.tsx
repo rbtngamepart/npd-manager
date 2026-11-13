@@ -160,6 +160,8 @@ export function StagePanel({
   onUpdateLog,
   onDeleteLog,
   onHideExt,
+  deletedExt = [],
+  onRestoreExt,
   onChanged,
   onOpenStage,
   onClose,
@@ -193,6 +195,9 @@ export function StagePanel({
   onDeleteLog: (id: string) => void;
   /** 지라·컨플루언스에서 수집된 기록 지우기 (다시 수집하지 않음) */
   onHideExt?: (ids: string[]) => void;
+  /** NPD에서 지운 수집 기록 (되살리기용) */
+  deletedExt?: StageLog[];
+  onRestoreExt?: (ids: string[]) => void;
   onChanged: () => void;
   onOpenStage: (id: string) => void;
   onClose: () => void;
@@ -749,7 +754,7 @@ export function StagePanel({
         />
       )}
       {links && <StageLinks projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
-      <StageExternal logs={logs} canEdit={canEdit} onHide={onHideExt} />
+      <StageExternal logs={logs} canEdit={canEdit} onHide={onHideExt} deleted={deletedExt} onRestore={onRestoreExt} />
 
       {calEvents.length > 0 && (
         <section className="space-y-2" data-tour="sp-cal-events">
