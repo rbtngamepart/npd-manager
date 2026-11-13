@@ -318,7 +318,12 @@
           const name = (rest.split(/\s+[-–>]\s+/)[0] || "").trim();
           const s = p.stages.find((x) => x.name === name);
           if (s) picked = { project: p, stage: s };
+          else det.value = rest; // 단계명이 NPD에 없으면 뒤 글자를 통째로 세부로
           render();
+          updatePreview();
+        } else {
+          // NPD 말머리가 아닌 괄호(예: [본사])면 원래 제목을 그대로 세부로 보존
+          det.value = cur.replace(/✅|\(완료\)/g, "").trim();
           updatePreview();
         }
       }
@@ -431,4 +436,99 @@
   chrome.runtime.onMessage.addListener((m) => {
     if (m && m.type === "open") open();
   });
+
+  // ---------------------------------------------------------------
+  // 일정을 눌렀을 때 뜨는 상세 창(수정·삭제·메일·옵션·닫기 버튼 줄)에 NPD 버튼
+  //   누르면 → 일정 수정 화면으로 들어가서 → 단계 고르기 창을 바로 엶
+  // ---------------------------------------------------------------
+  const EDIT_LABELS = /^(일정 수정|일정 편집|수정|edit event|edit)$/i;
+  const DELETE_LABELS = /^(일정 삭제|삭제|delete event|delete)$/i;
+
+  function waitFor(fn, ms = 6000) {
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const v = fn();
+        if (v) return resolve(v);
+        if (Date.now() - t0 > ms) return resolve(null);
+        setTimeout(tick, 120);
+      };
+      tick();
+    });
+  }
+
+  function makeBubbleButton(editBtn) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "npd-bubble-btn";
+    b.title = "NPD 단계 고르기 (일정 수정 화면에서 제목에 말머리·단계 넣기)";
+    b.setAttribute("aria-label", "NPD 단계 고르기");
+    b.textContent = "N";
+    const size = Math.round(editBtn.getBoundingClientRect().height) || 40;
+    b.style.cssText = [
+      `width:${size}px`,
+      `height:${size}px`,
+      "min-width:0",
+      "border-radius:50%",
+      "border:0",
+      "margin:0 4px",
+      "padding:0",
+      "background:#e8352c",
+      "color:#fff",
+      "font:800 15px/1 -apple-system,'Segoe UI','Malgun Gothic',sans-serif",
+      "cursor:pointer",
+      "display:inline-flex",
+      "align-items:center",
+      "justify-content:center",
+      "flex:none",
+      "box-shadow:0 1px 3px rgba(0,0,0,.25)",
+      "vertical-align:middle",
+    ].join(";");
+    b.addEventListener("mousedown", (e) => e.stopPropagation());
+    b.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      editBtn.click();
+      toast("일정 수정 화면을 여는 중…");
+      const input = await waitFor(() => findTitleInputs()[0]);
+      if (!input) return toast("수정 화면의 제목 칸을 찾지 못했습니다. 왼쪽 아래 [NPD] 버튼을 써 주세요.");
+      target = input;
+      input.focus();
+      open();
+    });
+    return b;
+  }
+
+  function scanBubbles() {
+    const edits = Array.from(document.querySelectorAll('[role="button"][aria-label], button[aria-label]')).filter(
+      (el) => EDIT_LABELS.test(labelOf(el)) && visible(el)
+    );
+    for (const edit of edits) {
+      // 같은 버튼 줄에 '삭제'도 있는 경우만 (일정 상세 창)
+      let bar = edit.parentElement;
+      for (let i = 0; i < 4 && bar; i++) {
+        if (bar.querySelector('[aria-label]') && Array.from(bar.querySelectorAll("[aria-label]")).some((x) => DELETE_LABELS.test(labelOf(x)))) break;
+        bar = bar.parentElement;
+      }
+      if (!bar || bar.querySelector(".npd-bubble-btn")) continue;
+      // 수정 버튼을 감싼 껍데기째로 그 앞에 넣기
+      let anchor = edit;
+      while (anchor.parentElement && anchor.parentElement !== bar && anchor.parentElement.children.length === 1) anchor = anchor.parentElement;
+      anchor.parentElement.insertBefore(makeBubbleButton(edit), anchor);
+    }
+  }
+
+  let scanTimer = null;
+  new MutationObserver(() => {
+    if (scanTimer) return;
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      try {
+        scanBubbles();
+      } catch {
+        /* 캘린더 화면 구조가 달라도 다른 기능은 그대로 */
+      }
+    }, 250);
+  }).observe(document.body, { childList: true, subtree: true });
+  scanBubbles();
 })();

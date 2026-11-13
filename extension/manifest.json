@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NPD 캘린더 도우미",
   "short_name": "NPD",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "구글 캘린더 일정 제목에 NPD 프로젝트 말머리와 단계를 골라 넣습니다.",
   "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
   "permissions": ["storage"],

@@ -97,7 +97,7 @@ export function ExtensionSetup({ toast }: { toast: (m: string) => void }) {
           </li>
           <li>자동으로 열리는 설정 창에 아래에서 만든 <b>연결 코드</b>를 붙여넣고 [저장하고 연결 확인]</li>
           <li>
-            구글 캘린더를 새로고침 → 일정 제목 칸을 누르면 옆에 <b>NPD 단계</b> 버튼, 왼쪽 아래 <b>NPD</b> 버튼, 단축키 <b>Alt+N</b>
+            구글 캘린더를 새로고침 → 일정 제목 칸을 누르면 옆에 <b>NPD 단계</b> 버튼, 왼쪽 아래 <b>NPD</b> 버튼, 단축키 <b>Alt+N</b>. 이미 있는 일정은 눌렀을 때 뜨는 상세 창 위쪽의 빨간 <b>N</b> 버튼
           </li>
           <li className="text-xs text-slate-500">
             업데이트가 나오면 새 zip으로 폴더를 덮어쓰고 chrome://extensions에서 ↻(새로고침)을 누르세요. 회사 정책으로 개발자 모드가 막혀 있으면 관리자에게 알려주세요.
