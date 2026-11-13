@@ -46,7 +46,10 @@ export function ProjectSettings({
     start !== (project.start_date ?? "") ||
     pmId !== (project.pm_id ?? "") ||
     (calReady && tags !== (project.calendar_tags ?? []).join(", "));
-  useUnsaved("project-settings", "프로젝트 정보", canEdit && settingsDirty);
+  useUnsaved("project-settings", "프로젝트 정보", canEdit && settingsDirty, async () => {
+    await save();
+    return true;
+  });
 
   const approved = profiles.filter((p) => p.approved);
   const memberIds = new Set(members.map((m) => m.user_id));

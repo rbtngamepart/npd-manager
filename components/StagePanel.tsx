@@ -243,7 +243,14 @@ export function StagePanel({
   useUnsaved(
     "stage-panel",
     `'${stage.name}' 단계${dirty ? " 수정 내용" : ""}${dirty && (draftLog || editLog) ? ", " : ""}${draftLog ? "작성 중인 기록" : editLog ? "수정 중인 기록" : ""}`,
-    dirty || draftLog || !!editLog
+    dirty || draftLog || !!editLog,
+    // [저장하고 나가기]: 단계 수정 저장 + 쓰던 기록 등록 + 고치던 기록 저장
+    async () => {
+      if (dirty) await save();
+      if (draftLog) await addLog();
+      if (editLog && !isEmptyHtml(editLog.html)) await onUpdateLog(editLog.id, htmlToText(editLog.html), editLog.html);
+      return true;
+    }
   );
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
   const nul = (v: string) => (v.trim() === "" ? null : v);
@@ -961,15 +968,15 @@ export function StagePanel({
           <span className="min-w-0 truncate text-xs text-slate-400">{dirty ? "저장하지 않은 변경사항이 있습니다" : `최근 수정 ${short(stage.updated_at.slice(0, 10))}`}</span>
           <span className="ml-auto shrink-0">
             <Tip content="단계를 지웁니다. 진행 기록은 프로젝트 [기록] 탭에 남고, 하위 단계는 한 칸 위로 올라가요.">
-              <button className="btn text-rose-600 hover:bg-rose-50" onClick={onDelete}>
+              <button className="btn whitespace-nowrap text-rose-600 hover:bg-rose-50" onClick={onDelete}>
                 단계 삭제
               </button>
             </Tip>
           </span>
-          <button className="btn-ghost shrink-0" disabled={!dirty} onClick={() => setF(base)}>
+          <button className="btn-ghost shrink-0 whitespace-nowrap" disabled={!dirty} onClick={() => setF(base)}>
             되돌리기
           </button>
-          <button className="btn-primary" disabled={!dirty || saving} onClick={save}>
+          <button className="btn-primary shrink-0 whitespace-nowrap" disabled={!dirty || saving} onClick={save}>
             {saving ? "저장 중…" : "저장"}
           </button>
         </div>

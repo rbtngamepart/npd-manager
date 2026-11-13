@@ -39,7 +39,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   }, [me?.approved]);
 
   async function logout() {
-    if (!confirmLeave()) return;
+    if (!(await confirmLeave())) return;
     await supabase().auth.signOut();
     router.replace("/login");
   }

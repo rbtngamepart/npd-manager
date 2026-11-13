@@ -88,9 +88,9 @@ function ProjectPage() {
   const [scale, setScale] = useState<"week" | "month">("week");
   const [selected, setSelected] = useState<string | null>(search.get("stage"));
   // 단계 패널을 닫거나 다른 단계로 바꿀 때 저장 안 한 입력이 있으면 확인
-  const selectStage = (sid: string | null) => {
+  const selectStage = async (sid: string | null) => {
     if (sid === selected) return;
-    if (!confirmLeave()) return;
+    if (!(await confirmLeave())) return;
     setSelected(sid);
   };
   const [importOpen, setImportOpen] = useState(false);
@@ -252,7 +252,7 @@ function ProjectPage() {
   }
 
   async function addStage(groupId: string | null = null) {
-    if (!confirmLeave()) return;
+    if (!(await confirmLeave())) return;
     const order = groups ? nextOrder(groupId, stages, groups) : stages.reduce((m, s) => Math.max(m, s.sort_order), -1) + 1;
     const { data, error } = await supabase()
       .from("stages")
@@ -604,8 +604,8 @@ function ProjectPage() {
             ).map(([k, l]) => (
               <button
                 key={k}
-                onClick={() => {
-                  if (tab === "settings" && k !== "settings" && !confirmLeave(["project-settings"])) return;
+                onClick={async () => {
+                  if (tab === "settings" && k !== "settings" && !(await confirmLeave(["project-settings"]))) return;
                   setTab(k);
                 }}
                 className={`rounded-md px-3 py-1.5 text-sm ${tab === k ? "bg-black/[0.06] font-medium" : "text-slate-500 hover:text-ink"}`}
