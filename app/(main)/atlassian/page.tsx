@@ -7,6 +7,7 @@ import { useApp } from "@/components/AppProvider";
 import { Toast } from "@/components/ui";
 import { relativeTime } from "@/lib/dates";
 import { findMentions } from "@/lib/atlassian/extract";
+import { ExternalHistory } from "@/components/ExternalHistory";
 
 interface State {
   key: string;
@@ -180,6 +181,8 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
           </div>
         ))}
       </div>
+
+      <ExternalHistory />
 
       {/* 코드 테스트 */}
       <section className="card space-y-3 p-5">
