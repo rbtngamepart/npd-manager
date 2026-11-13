@@ -84,7 +84,7 @@ export function ExternalHistory() {
   });
 
   return (
-    <section className="card p-5">
+    <section className="card p-5" data-tour="atl-history">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">최근 수집 이력</h2>
         <span className="text-xs text-slate-400">어떤 단계에 무엇이 들어왔는지</span>

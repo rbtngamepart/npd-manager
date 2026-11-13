@@ -150,7 +150,7 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
       </div>
 
       {/* 상태 */}
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3" data-tour="atl-status">
         {[
           {
             t: "지라 실시간 (자동화 규칙)",
@@ -185,7 +185,7 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
       <ExternalHistory />
 
       {/* 코드 테스트 */}
-      <section className="card space-y-3 p-5">
+      <section className="card space-y-3 p-5" data-tour="atl-test">
         <h2 className="text-sm font-semibold">인식 테스트</h2>
         <p className="text-xs text-slate-500">지라·컨플루언스에 쓸 글을 붙여넣어 보세요. NPD가 무엇을 가져갈지 미리 보여줍니다.</p>
         <textarea
@@ -225,7 +225,7 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
       </section>
 
       {/* 1. 지라 자동화 */}
-      <section className="card space-y-3 p-5">
+      <section className="card space-y-3 p-5" data-tour="atl-jira">
         <h2 className="text-sm font-semibold">1. 지라 → NPD 실시간 (지라 자동화 규칙, 지라 관리자가 한 번)</h2>
         <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
           <li>
@@ -261,7 +261,7 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
       </section>
 
       {/* 2. 정기 수집 */}
-      <section className="card space-y-3 p-5">
+      <section className="card space-y-3 p-5" data-tour="atl-poll">
         <h2 className="text-sm font-semibold">2. 컨플루언스 (+지라 보조) 매시간 수집 — Netlify 환경변수 (관리자가 한 번)</h2>
         <p className="text-sm text-slate-600">컨플루언스 문서는 매시간 최근에 고친 문서를 읽어서 코드를 찾습니다. 지라 자동화 규칙이 없어도 지라 이슈를 같은 방식으로 찾아옵니다.</p>
         <table className="w-full text-sm">
@@ -284,7 +284,7 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
       </section>
 
       {/* 3. 슬랙 */}
-      <section className="card space-y-3 p-5" id="slack">
+      <section className="card space-y-3 p-5" id="slack" data-tour="atl-slack">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold">3. 바뀌면 슬랙으로 &lsquo;NPD 업데이트 요청&rsquo; 보내기</h2>
           <span className={`rounded-full px-2 py-0.5 text-[11px] ${slack?.last_at ? (slack.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700") : "bg-slate-100 text-slate-500"}`}>
