@@ -25,7 +25,7 @@
   - **Apps Script** (회사 계정 권장): [내 연결 스크립트 만들기] → 코드를 script.google.com 새 프로젝트에 붙여넣고 `setup` 실행 → 30분마다 [말머리] 일정만 전송
   - **iCal 비공개 주소**: 주소를 붙여넣으면 서버가 매시 정각에 읽음 (회사 관리자가 막아두면 안 보임)
   - Netlify 환경변수 필요: `SUPABASE_SERVICE_ROLE_KEY`(Supabase Secret key `sb_secret_…`), `CRON_SECRET`(아무 긴 문자열). 둘 다 *Contains secret values* 체크
-- **지라·컨플루언스 연동용 Netlify 환경변수 (선택)**: `ATLASSIAN_SITE`(xxx.atlassian.net), `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_CONFLUENCE_SPACES`(선택), `ATLASSIAN_WEBHOOK_SECRET`(선택, 없으면 CRON_SECRET). 지라 자동화 규칙 본문·슬랙 알림 규칙 예시는 사이트 [지라 연동] 화면에서 복사
+- **지라·컨플루언스 연동용 Netlify 환경변수 (선택)**: `ATLASSIAN_SITE`(xxx.atlassian.net), `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_CONFLUENCE_SPACES`(선택), `ATLASSIAN_WEBHOOK_SECRET`(선택, 없으면 CRON_SECRET), `SLACK_WEBHOOK_URL`(선택, 슬랙 Incoming Webhook — NPD 코드가 적힌 지라 이슈의 상태·댓글·설명, 컨플루언스 문서 생성·수정 시 'NPD 업데이트 요청' 알림). 지라 자동화 규칙 본문·슬랙 알림 규칙 예시는 사이트 [지라 연동] 화면에서 복사
 - **단계 상세 패널 넓히기**: [⇤ 펼치기]로 왼쪽 단계 목록만 남기고 확장, 왼쪽 테두리를 끌어 너비 조절(브라우저에 기억). 넓으면 2열·3열 배치
 - **그룹(무한 깊이) + 업무 속성 라벨**: 간트 [+ 그룹]으로 단계를 묶고 그룹 안에 그룹을 계속 추가, 접기/펼치기·요약 막대. 라벨(기획·디자인·생산 등)은 여러 개, 게임파트가 목록 관리. 간트·진행관리·기록 탭에서 그룹·라벨로 필터
 - **단계 트리 (끌어서 놓기)**: 간트 왼쪽 단계 이름을 끌어 다른 단계 가운데에 놓으면 그 단계의 하위 단계, 위·아래 가장자리에 놓으면 순서 이동. 그룹에도 같은 방식. 하위 단계는 무한 깊이, 접기/펼치기, 상위 단계에 전체 기간 선 표시. 단계 상세에서 [꺼내기]
@@ -138,6 +138,7 @@ Netlify 무료 플랜은 **조직 소유 비공개 저장소를 빌드하지 못
 | `007_calendar_script.sql` | 캘린더 Apps Script 연결 (회사 계정용) |
 | `008_stage_tools.sql` | 그룹·업무 속성 라벨·체크리스트·파일 링크·선후 관계·단계 코드·서식 기록·지라/컨플루언스 수집 |
 | `009_stage_tree.sql` | 단계 아래 하위 단계 (간트에서 끌어서 놓기) |
+| `010_ext_hash.sql` | 지라·컨플루언스 변경 감지 (슬랙 업데이트 요청 알림) |
 
 ## 구글 드라이브 선택 창 설정 (관리자 한 번)
 구글 로그인용 OAuth 클라이언트를 만든 **같은 구글 클라우드 프로젝트**에서:

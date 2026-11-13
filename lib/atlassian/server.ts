@@ -2,6 +2,7 @@ import "server-only";
 // 지라·컨플루언스 → NPD 단계 기록 (서버 전용)
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { adfToText, cleanLine, findMentions, shortHash, storageToText } from "./extract";
+import { notifyChange, type StageChange } from "./slack";
 
 export interface ExtItem {
   source: "jira" | "confluence";
@@ -13,13 +14,25 @@ export interface ExtItem {
   assignee?: string | null;
   due?: string | null;
   text: string;
+  /** 변경 알림용: 본문(지라 설명·컨플루언스 내용)과 최근 댓글 */
+  description?: string;
+  lastComment?: string | null;
+}
+
+/** 서식(지라 위키 문법·ADF·링크 주소) 차이를 무시하고 글자·숫자만 남긴 지문 */
+function fingerprint(s: string): string {
+  return s
+    .replace(/https?:\/\/[^\s|\]]+/g, "")
+    .replace(/^\s*h[1-6]\.\s*/gm, "")
+    .replace(/\[~?accountid:[^\]]+\]/gi, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const short = (d?: string | null) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : null);
 
 /** 글 하나 처리: 언급된 단계마다 '참조' 기록 1개 + '결정:'/'이슈:' 줄마다 기록 */
-export async function ingest(item: ExtItem): Promise<{ codes: number; stages: number; written: number }> {
+export async function ingest(item: ExtItem): Promise<{ codes: number; stages: number; written: number; notified?: number }> {
   const mentions = findMentions(item.title, item.text);
   if (!mentions.length) return { codes: 0, stages: 0, written: 0 };
   const db = supabaseAdmin();
@@ -40,6 +53,13 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
   const extTitle = item.source === "jira" ? `${item.key} ${item.title}` : item.title;
   const base = `${item.source}:${item.key}`;
   let written = 0;
+  // 변경 감지용 지문: "본문|댓글"
+  const mainHash = shortHash([item.title, item.status ?? "", fingerprint(item.description ?? item.text)].join("|"));
+  const commentHash = item.lastComment?.trim() ? shortHash(fingerprint(item.lastComment)) : null;
+  const changes: StageChange[] = [];
+  // ext_hash 칸(업데이트 010)이 있는지
+  const probe = await db.from("stage_logs").select("ext_hash").limit(1);
+  const hashReady = !probe.error;
 
   for (const st of stages) {
     const m = mentions.find((x) => x.code === st.ref_code)!;
@@ -72,10 +92,26 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
 
     const { data: existing } = await db
       .from("stage_logs")
-      .select("id,ext_key,body,ext_status,ext_title")
+      .select(hashReady ? "id,ext_key,body,ext_status,ext_title,ext_hash" : "id,ext_key,body,ext_status,ext_title")
       .eq("stage_id", st.id)
       .like("ext_key", `${base}%`);
-    const byKey = new Map((existing ?? []).map((e) => [e.ext_key as string, e]));
+    const list = (existing ?? []) as unknown as { id: string; ext_key: string; body: string; ext_status: string | null; ext_title: string | null; ext_hash?: string | null }[];
+    const byKey = new Map(list.map((e) => [e.ext_key, e]));
+
+    // 이 단계 기준으로 무엇이 바뀌었나
+    const ref = byKey.get(base);
+    const [oldMain, oldComment] = (ref?.ext_hash ?? "").split(":");
+    const kinds: StageChange["kinds"] = [];
+    if (!ref) kinds.push("new");
+    else if (hashReady && ref.ext_hash) {
+      const oldSt = (ref.ext_status ?? "").split(" · ")[0];
+      if (item.source === "jira" && item.status && item.status !== oldSt) kinds.push("status");
+      if (commentHash && commentHash !== oldComment) kinds.push("comment");
+      if (oldMain !== mainHash && !kinds.includes("status")) kinds.push("content");
+    }
+    if (kinds.length) changes.push({ stageId: st.id, projectId: st.project_id, stageName: st.name, refCode: st.ref_code, kinds, oldStatus: ref?.ext_status });
+    if (hashReady) rows[0].ext_hash = `${mainHash}:${commentHash ?? oldComment ?? ""}`;
+
     for (const r of rows) {
       const old = byKey.get(r.ext_key as string);
       const common = { ...r, source: item.source, ext_url: item.url, stage_name: st.name };
@@ -83,14 +119,19 @@ export async function ingest(item: ExtItem): Promise<{ codes: number; stages: nu
         const { error: e } = await db.from("stage_logs").insert({ ...common, project_id: st.project_id, stage_id: st.id, author_id: null });
         if (e) throw e;
         written++;
-      } else if (old.body !== r.body || old.ext_status !== r.ext_status || old.ext_title !== r.ext_title) {
+      } else if (old.body !== r.body || old.ext_status !== r.ext_status || old.ext_title !== r.ext_title || (r.ext_hash !== undefined && old.ext_hash !== r.ext_hash)) {
         const { error: e } = await db.from("stage_logs").update({ ...common, edited_at: new Date().toISOString() }).eq("id", old.id);
         if (e) throw e;
         written++;
       }
     }
   }
-  return { codes: mentions.length, stages: stages.length, written };
+  try {
+    await notifyChange(item, changes);
+  } catch (e) {
+    console.error("슬랙 알림 실패", e);
+  }
+  return { codes: mentions.length, stages: stages.length, written, notified: changes.length };
 }
 
 // ---------------------------------------------------------------------
@@ -130,6 +171,8 @@ export function fromJiraWebhook(b: Record<string, unknown>): ExtItem | null {
     assignee: str(b.assignee) || null,
     due: str(b.duedate) || null,
     text: [str(b.summary), str(b.description), str(b.comment), str(b.text)].join("\n"),
+    description: str(b.description),
+    lastComment: str(b.comment) || null,
   };
 }
 
@@ -200,6 +243,7 @@ export async function pollConfluence() {
           url: `https://${c.site}/wiki${p._links?.webui ?? `/pages/${p.id}`}`,
           title: p.title,
           text: storageToText(p.body?.storage?.value ?? ""),
+          lastComment: null,
         });
         written += r.written;
         stages += r.stages;
@@ -246,6 +290,8 @@ export async function pollJira() {
           assignee: (f.assignee as { displayName?: string } | null)?.displayName ?? null,
           due: (f.duedate as string | null) ?? null,
           text: [String(f.summary ?? ""), adfToText(f.description), ...comments].join("\n"),
+          description: adfToText(f.description),
+          lastComment: comments.length ? comments[comments.length - 1] : null,
         });
         written += r.written;
       }

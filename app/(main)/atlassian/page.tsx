@@ -99,6 +99,13 @@ export default function AtlassianPage() {
   const hook = st("jira_webhook");
   const conf = st("confluence");
   const jira = st("jira");
+  const slack = st("slack");
+
+  async function testSlack() {
+    const r = await fetch("/api/atlassian/slack-test", { method: "POST" });
+    const j = await r.json().catch(() => ({}));
+    show(j.ok ? "슬랙에 시험 메시지를 보냈습니다. 채널을 확인하세요" : `실패: ${j.error ?? r.status}`);
+  }
 
   const body = `{
   "key": "{{issue.key}}",
@@ -110,8 +117,8 @@ export default function AtlassianPage() {
   "description": "{{issue.description.jsonEncode}}",
   "comment": "{{comment.body.jsonEncode}}"
 }`;
-  const slackMsg = `:arrows_counterclockwise: *{{issue.key}} {{issue.summary}}*
-상태: {{fieldChange.fromString}} → *{{fieldChange.toString}}* (담당 {{issue.assignee.displayName}})
+  const slackMsg = `:arrows_counterclockwise: *NPD 업데이트 요청* · {{issue.key}} {{issue.summary}}
+{{#if(comment)}}새 댓글: {{comment.body.abbreviate(150)}}{{/}}{{#if(fieldChange)}}변경: {{fieldChange.field}} {{fieldChange.fromString}} → *{{fieldChange.toString}}*{{/}} (담당 {{issue.assignee.displayName}})
 NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.match("(NPD-[2-9A-HJKMNP-Z]{5})")}}
 지라: {{issue.url}}`;
 
@@ -275,40 +282,87 @@ NPD 단계 업데이트 부탁드립니다 👉 ${origin}/s/{{issue.description.
 
       {/* 3. 슬랙 */}
       <section className="card space-y-3 p-5" id="slack">
-        <h2 className="text-sm font-semibold">3. 지라 상태가 바뀌면 슬랙으로 &lsquo;NPD 업데이트 요청&rsquo; 보내기 (지라 자동화)</h2>
-        <p className="text-sm text-slate-600">NPD 사이트가 아니라 지라 자동화 규칙으로 만듭니다. 트리거 조건을 지라에서 자유롭게 정할 수 있어요.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold">3. 바뀌면 슬랙으로 &lsquo;NPD 업데이트 요청&rsquo; 보내기</h2>
+          <span className={`rounded-full px-2 py-0.5 text-[11px] ${slack?.last_at ? (slack.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700") : "bg-slate-100 text-slate-500"}`}>
+            {slack?.last_at ? `마지막 알림 ${relativeTime(String(slack.last_at))}${slack.ok ? "" : ` · 실패: ${slack.error}`}` : "아직 보낸 적 없음"}
+          </span>
+          <button className="btn-outline ml-auto py-1 text-xs" onClick={testSlack}>
+            시험 메시지 보내기
+          </button>
+        </div>
+        <p className="text-sm text-slate-600">
+          NPD 코드가 적힌 지라 이슈·컨플루언스 문서가 바뀌면 <b>NPD가 직접</b> 슬랙 채널로 알려줍니다. 1번(지라 실시간)·2번(정기 수집)으로 들어온 내용을 비교해서 보냅니다.
+        </p>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-slate-500">
+              <th className="py-1 pr-3 font-medium">언제</th>
+              <th className="py-1 font-medium">알림 내용</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-black/[0.05] text-xs text-slate-700">
+            <tr>
+              <td className="py-1.5 pr-3">지라 상태 변경</td>
+              <td>상태 진행 → <b>완료</b></td>
+            </tr>
+            <tr>
+              <td className="py-1.5 pr-3">지라 새 댓글</td>
+              <td>새 댓글 + 댓글 앞부분</td>
+            </tr>
+            <tr>
+              <td className="py-1.5 pr-3">지라 제목·설명 수정</td>
+              <td>제목·설명 수정 (서식만 바뀐 경우는 제외)</td>
+            </tr>
+            <tr>
+              <td className="py-1.5 pr-3">컨플루언스 문서 생성·수정</td>
+              <td>새로 코드가 적힌 문서 / 문서 내용 수정</td>
+            </tr>
+            <tr>
+              <td className="py-1.5 pr-3">처음 코드를 적었을 때</td>
+              <td>NPD 코드가 새로 연결됨</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="text-xs text-slate-500">메시지에는 지라·문서 링크, 연결된 NPD 단계 링크(프로젝트 › 단계), 프로젝트 PM 이름이 들어갑니다. 코드가 없는 이슈·문서는 알리지 않아요.</p>
         <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
           <li>
-            슬랙: 알림 받을 채널에서 <b>앱 추가 → Incoming Webhooks</b>(또는 Workflow Builder의 웹훅)로 <b>웹훅 URL</b>을 만듭니다. 이미 &lsquo;Jira Cloud&rsquo; 슬랙 앱이 있으면 생략.
+            슬랙: 알림 받을 채널 → <b>앱 추가 → Incoming Webhooks</b>(슬랙 관리자 승인이 필요할 수 있음) → <b>웹훅 URL</b> 복사 (<code>https://hooks.slack.com/services/…</code>)
           </li>
           <li>
-            지라 자동화 → 규칙 만들기 → 트리거 <b>작업 항목 전환됨</b>(Work item transitioned)
-            <div className="text-xs text-slate-500">여기서 &lsquo;시작 상태 → 대상 상태&rsquo;를 고르면 그 전환만 알림 (예: 진행 중 → 검토 요청, 아무 상태 → 완료)</div>
+            Netlify 환경변수 <code className="rounded bg-slate-100 px-1">SLACK_WEBHOOK_URL</code>에 붙여넣기 (Contains secret values 체크) → 다시 배포
           </li>
           <li>
-            조건 추가 (원하는 만큼):
-            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-slate-600">
-              <li>
-                <b>JQL 조건</b> — 예) <code className="rounded bg-slate-100 px-1">project = GAME AND labels = NPD</code>
-              </li>
-              <li>
-                <b>고급 비교</b> — 설명에 NPD 코드가 있는 이슈만: <code className="rounded bg-slate-100 px-1">{"{{issue.description}}"}</code> 정규식 포함{" "}
-                <code className="rounded bg-slate-100 px-1">NPD-[2-9A-Z]{"{5}"}</code>
-              </li>
-              <li>
-                <b>작업 항목 필드 조건</b> — 우선순위·담당자·이슈 유형 등
-              </li>
-            </ul>
+            Supabase SQL Editor에서 <code className="rounded bg-slate-100 px-1">010_ext_hash.sql</code> 실행 (바뀐 내용 비교용)
           </li>
           <li>
-            작업: <b>Slack 메시지 보내기</b>(Send Slack message) — 1번의 웹훅 URL, 채널 입력. 메시지는 아래를 붙여넣고 고치세요 <Copy text={slackMsg} onCopied={() => show("메시지 복사")} />
+            1번 지라 규칙의 트리거에 <b>&lsquo;업무 항목에 댓글이 달림&rsquo;</b>(댓글 추가됨)도 넣어야 댓글이 바로 들어옵니다. 없어도 2번 정기 수집이 매시간 찾아와요.
           </li>
-          <li>담당자에게 직접 보내려면 메시지에 <code className="rounded bg-slate-100 px-1">{"@{{issue.assignee.displayName}}"}</code> 대신 슬랙 DM 대상(사용자 ID)을 넣거나, &lsquo;이메일 보내기&rsquo; 작업을 함께 쓰세요.</li>
+          <li>[시험 메시지 보내기]로 채널에 오는지 확인</li>
         </ol>
-        <Code>{slackMsg}</Code>
         <p className="text-xs text-slate-500">
-          메시지 속 링크는 이슈 설명의 첫 NPD 코드로 해당 단계를 바로 엽니다. 코드가 없는 이슈라면 그 줄은 지우세요.
+          컨플루언스는 매시간 수집이라 최대 1시간 늦게, 지라는 1번 규칙이 있으면 바로 알립니다. 010 실행 직후 처음 수집할 때는 비교 기준만 저장하고 알리지 않습니다.
         </p>
+
+        <details className="rounded-lg bg-slate-50 p-3 text-sm">
+          <summary className="cursor-pointer font-medium text-slate-700">따로: 지라 자동화로 조건을 세밀하게 정해 슬랙 보내기</summary>
+          <p className="mt-2 text-xs text-slate-600">특정 프로젝트·상태 전환만, 담당자에게만 등 조건을 지라에서 직접 정하고 싶을 때 씁니다. 위 NPD 알림과 함께 쓰면 메시지가 두 번 갈 수 있어요.</p>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
+            <li>
+              트리거 <b>여러 업무 항목 이벤트</b> — <i>업무 항목 전환됨 · 업무 항목에 댓글이 달림 · 업무 항목이 업데이트됨</i> (전환만 원하면 &lsquo;업무 항목 전환됨&rsquo;에서 시작·대상 상태 지정)
+            </li>
+            <li>
+              조건: <b>{"{{smart values}}"} 조건</b> — 첫 번째 값 <code className="rounded bg-white px-1">{"{{issue.summary}} {{issue.description}} {{comment.body}}"}</code>, 정규식 포함{" "}
+              <code className="rounded bg-white px-1">NPD-[2-9A-Z]{"{5}"}</code> (+ JQL 조건 등 원하는 만큼)
+            </li>
+            <li>
+              작업: <b>Slack 메시지 보내기</b> — 웹훅 URL과 아래 메시지 <Copy text={slackMsg} onCopied={() => show("메시지 복사")} />
+            </li>
+          </ol>
+          <div className="mt-2">
+            <Code>{slackMsg}</Code>
+          </div>
+        </details>
       </section>
       <Toast msg={toast} />
     </div>

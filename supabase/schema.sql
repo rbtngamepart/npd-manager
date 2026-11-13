@@ -1008,3 +1008,8 @@ end $$;
 drop trigger if exists stages_check_parent on public.stages;
 create trigger stages_check_parent before insert or update of parent_id on public.stages
   for each row execute function public.check_stage_parent();
+
+-- ---------------------------------------------------------------------
+-- 12. 지라·컨플루언스 변경 감지 (업데이트 010과 같은 내용)
+-- ---------------------------------------------------------------------
+alter table public.stage_logs add column if not exists ext_hash text;
