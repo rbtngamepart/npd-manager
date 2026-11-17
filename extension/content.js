@@ -14,6 +14,8 @@
   host.id = "npd-helper-root";
   host.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483000;";
   document.documentElement.appendChild(host);
+  // 확장 창을 누를 때 구글 캘린더의 '바깥 클릭' 처리(상세 창 닫기 등)로 새지 않게
+  ["mousedown", "mouseup", "pointerdown", "pointerup", "click", "touchstart"].forEach((t) => host.addEventListener(t, (e) => e.stopPropagation()));
   const root = host.attachShadow({ mode: "open" });
 
   root.innerHTML = `
@@ -178,12 +180,31 @@
   }
 
   // 제목 칸에 커서가 가면 옆에 'NPD 단계' 버튼
+  const MORE_LABELS = /^(옵션 더보기|more options)$/i;
+  // 새 일정 간단 입력 창의 [옵션 더보기] 버튼
+  function moreOptionsBtn() {
+    if (!target) return null;
+    const box = target.closest('[role="dialog"]') || target.closest("form") || document;
+    return (
+      Array.from(box.querySelectorAll('button, [role="button"]')).find(
+        (b) => (MORE_LABELS.test((b.textContent || "").trim()) || MORE_LABELS.test(labelOf(b))) && visible(b)
+      ) || null
+    );
+  }
   function placeChip() {
     if (!target || !visible(target)) return chip.classList.remove("show");
-    const r = target.getBoundingClientRect();
     chip.classList.add("show");
-    // 제목 칸 안쪽 오른쪽 끝에 (오른쪽의 [저장] 버튼과 겹치지 않게)
     const c = chip.getBoundingClientRect();
+    const more = moreOptionsBtn();
+    if (more) {
+      // 새 일정 창: [옵션 더보기] 왼쪽
+      const m = more.getBoundingClientRect();
+      chip.style.top = `${m.top + (m.height - c.height) / 2}px`;
+      chip.style.left = `${Math.max(4, m.left - c.width - 10)}px`;
+      return;
+    }
+    // 수정 화면: 제목 칸 안쪽 오른쪽 끝 (오른쪽 [저장] 버튼과 겹치지 않게)
+    const r = target.getBoundingClientRect();
     chip.style.top = `${Math.max(4, r.top + (r.height - c.height) / 2)}px`;
     chip.style.left = `${Math.max(r.left, r.right - c.width - 6)}px`;
   }
@@ -201,7 +222,11 @@
   document.addEventListener(
     "focusout",
     (e) => {
-      if (e.target === target) setTimeout(() => document.activeElement !== target && !back.classList.contains("show") && chip.classList.remove("show"), 200);
+      if (e.target === target)
+        setTimeout(() => {
+          // 새 일정 창은 열려 있는 동안 계속 보이게
+          if (document.activeElement !== target && !back.classList.contains("show") && !moreOptionsBtn()) chip.classList.remove("show");
+        }, 200);
     },
     true
   );
@@ -292,14 +317,17 @@
     if (!data.projects.length) listEl.innerHTML = '<div class="ph">진행 중인 프로젝트가 없습니다.</div>';
   }
 
-  function open() {
-    target = findTitle() || target;
+  // 상세 창에서 열었을 때: 그 일정 제목 (제목 칸이 없음 → 고른 결과는 수정 화면이 열릴 때 넣음)
+  let fromBubble = null;
+  function open(presetTitle) {
+    fromBubble = typeof presetTitle === "string" ? presetTitle : null;
+    target = fromBubble !== null ? null : findTitle() || target;
     picked = null;
     cursor = 0;
     q.value = "";
     doneCb.checked = false;
     // 제목에 먼저 적어둔 글은 '세부'로 (이미 말머리가 있으면 떼고)
-    const cur = target ? target.value.trim() : "";
+    const cur = fromBubble !== null ? fromBubble.trim() : target ? target.value.trim() : "";
     const m = cur.match(/^\s*[[【［]\s*([^\]】］]+?)\s*[\]】］]\s*(.*)$/);
     let rest = m ? m[2] : cur;
     if (/✅|\(완료\)/.test(rest)) {
@@ -334,6 +362,7 @@
   }
   function close() {
     back.classList.remove("show");
+    fromBubble = null;
     if (target && visible(target)) target.focus();
   }
 
@@ -341,6 +370,18 @@
     if (!picked) return;
     const t = titleFor(picked.project, picked.stage);
     localStorage.setItem(LAST_PROJECT, picked.project.id);
+    if (!copyOnly && fromBubble !== null) {
+      // 상세 창에서 고른 경우: ✎ 수정을 누르면 열리는 화면의 제목 칸에 자동으로 넣음
+      pending = { title: t, link: linkCb.checked && data && picked.stage.code ? `NPD 단계: ${data.site}/s/${picked.stage.code}` : null, until: Date.now() + 3 * 60 * 1000 };
+      try {
+        await navigator.clipboard.writeText(t);
+      } catch {
+        /* 복사 못 해도 자동 입력은 됨 */
+      }
+      back.classList.remove("show");
+      toast("✎(수정)을 누르면 열리는 화면의 제목에 자동으로 넣어요 · 클립보드에도 복사됨");
+      return;
+    }
     const el = copyOnly ? null : findTitle();
     if (!el) {
       try {
@@ -440,145 +481,113 @@
   });
 
   // ---------------------------------------------------------------
-  // 일정을 눌렀을 때 뜨는 상세 창(수정·삭제·메일·옵션·닫기 버튼 줄)에 NPD 버튼
-  //   누르면 → 일정 수정 화면으로 들어가서 → 단계 고르기 창을 바로 엶
+  // 일정을 눌렀을 때 뜨는 상세 창: 버튼 줄 왼쪽에 'N' 버튼
+  //   구글 화면(✎ 수정 등)은 건드리지 않고, 확장 프로그램 쪽에서 따로 띄움
+  //   N → 단계 고르기 → 사용자가 ✎(수정)을 누르면 열리는 화면의 제목에 자동 입력
   // ---------------------------------------------------------------
   const EDIT_LABELS = /^(일정 수정|일정 편집|수정|edit event|edit)$/i;
   const DELETE_LABELS = /^(일정 삭제|삭제|delete event|delete)$/i;
+  let pending = null; // { title, link, until }
 
-  function waitFor(fn, ms = 6000) {
-    return new Promise((resolve) => {
-      const t0 = Date.now();
-      const tick = () => {
-        const v = fn();
-        if (v) return resolve(v);
-        if (Date.now() - t0 > ms) return resolve(null);
-        setTimeout(tick, 120);
-      };
-      tick();
-    });
-  }
+  const bn = document.createElement("button");
+  bn.className = "bn";
+  bn.title = "NPD 단계 고르기";
+  bn.setAttribute("aria-label", "NPD 단계 고르기");
+  bn.innerHTML =
+    '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 19V5h2.7l6.9 9.7V5H17.4v14h-2.7L7.8 9.3V19z" fill="currentColor"/><circle cx="19.5" cy="5" r="2.5" fill="#f87171"/></svg>';
+  root.appendChild(bn);
+  const bnStyle = document.createElement("style");
+  bnStyle.textContent = `.bn{position:fixed;display:none;pointer-events:auto;border:0;border-radius:50%;padding:0;cursor:pointer;place-items:center;background:transparent;}
+    .bn.show{display:grid}.bn:hover{background:rgba(127,127,127,.18)}`;
+  root.appendChild(bnStyle);
 
-  // 'N' 모양 아이콘 (구글 아이콘처럼 글자색을 따라감)
-  const N_ICON =
-    '<path d="M5 19V5h2.7l6.9 9.7V5H17.4v14h-2.7L7.8 9.3V19z" fill="currentColor"/>' +
-    '<circle cx="19.5" cy="5" r="2.5" fill="#f87171"/>';
-
-  function iconSvg(sizeFrom) {
-    const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    const sz = sizeFrom ? Math.round(sizeFrom.getBoundingClientRect().width) || 20 : 20;
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("width", String(sz));
-    svg.setAttribute("height", String(sz));
-    svg.setAttribute("aria-hidden", "true");
-    svg.style.display = "block";
-    svg.innerHTML = N_ICON;
-    return svg;
-  }
-
-  /** 구글의 '수정' 버튼(껍데기 포함)을 복제해서 아이콘만 바꿈 → 크기·색·모양이 옆 버튼과 같음 */
-  function makeBubbleButton(editBtn, anchor) {
-    const clone = anchor.cloneNode(true);
-    clone.classList.add("npd-bubble-btn");
-    // 구글 동작(수정 열기 등)이 붙은 표시는 모두 지움
-    for (const el of [clone, ...clone.querySelectorAll("*")]) {
-      for (const a of Array.from(el.attributes)) {
-        if (/^(id|jsaction|jscontroller|jsname|jsshadow|jsslot|jsmodel|jsdata|data-.*|aria-describedby|aria-labelledby|aria-pressed|href)$/i.test(a.name)) el.removeAttribute(a.name);
-      }
-    }
-    const btn = clone.matches('button, [role="button"]') ? clone : clone.querySelector('button, [role="button"]') || clone;
-    btn.setAttribute("aria-label", "NPD 단계 고르기");
-    btn.setAttribute("title", "NPD 단계 고르기 — 일정 수정 화면에서 제목에 말머리·단계 넣기");
-    btn.setAttribute("tabindex", "0");
-    // 아이콘 바꾸기: 원래 아이콘(svg 또는 아이콘 글꼴) 자리에
-    const oldSvg = btn.querySelector("svg");
-    const iconFont = !oldSvg && Array.from(btn.querySelectorAll("i, span")).find((x) => x.children.length === 0 && x.textContent.trim());
-    if (oldSvg) {
-      const ns = iconSvg(editBtn.querySelector("svg"));
-      for (const a of Array.from(oldSvg.attributes)) if (/^(class|style|focusable)$/.test(a.name)) ns.setAttribute(a.name, a.value);
-      ns.style.display = "block";
-      oldSvg.replaceWith(ns);
-    } else if (iconFont) {
-      iconFont.textContent = "";
-      iconFont.appendChild(iconSvg(null));
-    } else {
-      btn.textContent = "";
-      btn.appendChild(iconSvg(null));
-    }
-    const run = async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      editBtn.click();
-      toast("일정 수정 화면을 여는 중…");
-      const input = await waitFor(() => findTitleInputs()[0]);
-      if (!input) return toast("수정 화면의 제목 칸을 찾지 못했습니다. 왼쪽 아래 [NPD] 버튼을 써 주세요.");
-      target = input;
-      input.focus();
-      open();
-    };
-    ["mousedown", "mouseup", "pointerdown", "pointerup", "touchstart"].forEach((t) =>
-      clone.addEventListener(t, (e) => e.stopPropagation(), true)
-    );
-    clone.addEventListener("click", run, true);
-    clone.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && run(e), true);
-    return clone;
-  }
-
-  // 그림이 깔린 일정에서 구글 ✎ 아이콘이 배경과 같은 색으로 안 보이는 경우: 옆 버튼(삭제) 아이콘 색에 맞춤
-  function repairEditIcon(edit, bar) {
-    try {
-      const del = Array.from(bar.querySelectorAll("[aria-label]")).find((x) => DELETE_LABELS.test(labelOf(x)));
-      const ref = del && del.querySelector("svg path, svg");
-      const svg = edit.querySelector("svg");
-      if (!ref || !svg) return;
-      if (getComputedStyle(ref).fill === "none") return;
-      const refFill = getComputedStyle(ref).fill;
-      const cs = getComputedStyle(svg);
-      if (cs.display === "none") svg.style.display = "block";
-      if (cs.visibility === "hidden") svg.style.visibility = "visible";
-      if (cs.opacity === "0") svg.style.opacity = "1";
-      svg.querySelectorAll("path, circle, rect, polygon").forEach((el) => {
-        const f = getComputedStyle(el).fill;
-        if (refFill && f !== refFill && el.getAttribute("fill") !== "none") el.style.fill = refFill;
-      });
-    } catch {
-      /* 못 고쳐도 다른 기능은 그대로 */
-    }
-  }
-
-  function scanBubbles() {
-    const edits = Array.from(document.querySelectorAll('[role="button"][aria-label], button[aria-label]')).filter(
-      (el) => EDIT_LABELS.test(labelOf(el)) && !el.closest(".npd-bubble-btn")
-    );
+  let bubble = null; // { bar, edit, title }
+  function findBubble() {
+    const edits = Array.from(document.querySelectorAll('[role="button"][aria-label], button[aria-label]')).filter((el) => EDIT_LABELS.test(labelOf(el)) && visible(el));
     for (const edit of edits) {
-      // 같은 버튼 줄에 '삭제'도 있는 경우만 (일정 상세 창)
       let bar = edit.parentElement;
-      for (let i = 0; i < 4 && bar; i++) {
-        if (bar.querySelector('[aria-label]') && Array.from(bar.querySelectorAll("[aria-label]")).some((x) => DELETE_LABELS.test(labelOf(x)))) break;
+      for (let i = 0; i < 5 && bar; i++) {
+        if (Array.from(bar.querySelectorAll("[aria-label]")).some((x) => DELETE_LABELS.test(labelOf(x)))) break;
         bar = bar.parentElement;
       }
-      if (!bar || !visible(bar) || bar.querySelector(".npd-bubble-btn")) continue;
-      // 수정 버튼을 감싼 껍데기째로 복제해서 그 앞에 넣기
-      let anchor = edit;
-      while (anchor.parentElement && anchor.parentElement !== bar && anchor.parentElement.children.length === 1) anchor = anchor.parentElement;
-      anchor.parentElement.insertBefore(makeBubbleButton(edit, anchor), anchor);
-      repairEditIcon(edit, bar);
+      if (!bar || !visible(bar)) continue;
+      const box = edit.closest('[role="dialog"]') || bar.parentElement;
+      const h = box && box.querySelector('[role="heading"]');
+      return { bar, edit, box, title: h ? h.textContent.trim() : "" };
     }
+    return null;
+  }
+  function placeBubbleBtn() {
+    bubble = findBubble();
+    if (!bubble || back.classList.contains("show")) return bn.classList.remove("show");
+    // 버튼 줄의 맨 왼쪽 버튼 기준으로, 그 왼쪽에
+    const btns = Array.from(bubble.bar.querySelectorAll('[role="button"][aria-label], button[aria-label]')).filter(visible);
+    const first = btns.reduce((a, b) => (b.getBoundingClientRect().left < a.getBoundingClientRect().left ? b : a), bubble.edit);
+    const r = first.getBoundingClientRect();
+    const ref = bubble.edit;
+    const cs = getComputedStyle(ref);
+    const size = Math.round(r.height) || 40;
+    bn.style.width = `${size}px`;
+    bn.style.height = `${size}px`;
+    bn.style.color = cs.color;
+    bn.style.top = `${r.top}px`;
+    bn.style.left = `${r.left - size - 4}px`;
+    bn.classList.add("show");
+  }
+  // 누를 때 상세 창이 닫히지 않게 (구글은 바깥 클릭으로 닫음)
+  ["mousedown", "pointerdown", "mouseup", "pointerup"].forEach((t) =>
+    bn.addEventListener(t, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    })
+  );
+  bn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const b = bubble || findBubble();
+    open(b ? b.title : "");
+    bn.classList.remove("show");
+  });
+
+  // ✎ 수정 화면이 열리면 고른 제목을 자동으로
+  async function fillPending() {
+    if (!pending || Date.now() > pending.until) return (pending = null);
+    const el = findTitleInputs()[0];
+    if (!el) return;
+    const p = pending;
+    pending = null;
+    setInputValue(el, p.title);
+    let note = "";
+    if (p.link) {
+      const d = findDesc();
+      if (d) appendToDesc(d, p.link);
+      else note = " (설명 칸이 닫혀 있어 링크는 넣지 않았어요)";
+    }
+    el.focus();
+    toast(`NPD 제목을 넣었습니다. 확인 후 [저장]을 눌러주세요${note}`);
   }
 
   let scanTimer = null;
+  const scan = () => {
+    try {
+      placeBubbleBtn();
+      fillPending();
+      if (chip.classList.contains("show")) {
+        if (!target || !target.isConnected || !visible(target)) chip.classList.remove("show");
+        else placeChip();
+      }
+    } catch {
+      /* 캘린더 화면 구조가 달라도 다른 기능은 그대로 */
+    }
+  };
   new MutationObserver(() => {
     if (scanTimer) return;
     scanTimer = setTimeout(() => {
       scanTimer = null;
-      try {
-        scanBubbles();
-      } catch {
-        /* 캘린더 화면 구조가 달라도 다른 기능은 그대로 */
-      }
-    }, 250);
-  }).observe(document.body, { childList: true, subtree: true });
-  scanBubbles();
+      scan();
+    }, 200);
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class", "aria-hidden"] });
+  window.addEventListener("resize", scan);
+  document.addEventListener("scroll", scan, true);
+  scan();
 })();
