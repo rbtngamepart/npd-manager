@@ -21,7 +21,14 @@ export function hasUnsaved(): boolean {
   return dirty.size > 0;
 }
 
-type Ask = (what: string, canSave: boolean) => Promise<"save" | "discard" | "cancel">;
+export interface AskText {
+  title: string;
+  save: string;
+  discard: string;
+}
+const LEAVE: AskText = { title: "저장하고 나가시겠습니까?", save: "저장하고 나가기", discard: "저장하지 않고 나가기" };
+
+type Ask = (what: string, canSave: boolean, text: AskText) => Promise<"save" | "discard" | "cancel">;
 let ask: Ask | null = null;
 
 /**
@@ -35,7 +42,7 @@ export async function confirmLeave(only?: string[]): Promise<boolean> {
   const what = Array.from(new Set(entries.map((e) => e.label))).join(", ");
   const canSave = entries.every((e) => !!e.save);
   const choice = ask
-    ? await ask(what, canSave)
+    ? await ask(what, canSave, LEAVE)
     : window.confirm(`저장하지 않은 내용이 있습니다.\n(${what})\n\n저장하지 않고 나가시겠습니까?`)
       ? "discard"
       : "cancel";
@@ -48,6 +55,15 @@ export async function confirmLeave(only?: string[]): Promise<boolean> {
   }
   keys.forEach((k) => dirty.delete(k));
   return true;
+}
+
+/**
+ * 같은 모양의 확인창을 직접 띄움 (예: 큰 창에서 고치던 기록을 닫을 때)
+ *   [저장하고 닫기] [저장하지 않고 닫기] [취소]
+ */
+export async function askSave(what: string, text: AskText = { title: "저장하고 닫으시겠습니까?", save: "저장하고 닫기", discard: "저장하지 않고 닫기" }) {
+  if (ask) return ask(what, true, text);
+  return window.confirm(`${text.title}\n(${what})`) ? "save" : "discard";
 }
 
 /** 컴포넌트에서: 고치는 중이면 등록, 화면에서 사라지면 해제 */
@@ -63,11 +79,11 @@ export function useUnsaved(key: string, label: string, isDirty: boolean, save?: 
 /** 앱 전체에 한 번: 확인창 + 새로고침·창 닫기, 사이트 안 링크 이동 */
 export function UnsavedGuard() {
   const router = useRouter();
-  const [dlg, setDlg] = useState<{ what: string; canSave: boolean; resolve: (c: "save" | "discard" | "cancel") => void } | null>(null);
+  const [dlg, setDlg] = useState<{ what: string; canSave: boolean; text: AskText; resolve: (c: "save" | "discard" | "cancel") => void } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    ask = (what, canSave) => new Promise((resolve) => setDlg({ what, canSave, resolve }));
+    ask = (what, canSave, text) => new Promise((resolve) => setDlg({ what, canSave, text, resolve }));
     return () => {
       ask = null;
     };
@@ -107,12 +123,14 @@ export function UnsavedGuard() {
     if (!dlg) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !saving) {
+        e.stopPropagation();
         dlg.resolve("cancel");
         setDlg(null);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // 다른 창(큰 창 등)의 Esc보다 먼저 받음
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [dlg, saving]);
 
   if (!dlg) return null;
@@ -125,17 +143,17 @@ export function UnsavedGuard() {
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-black/30 p-4" onMouseDown={() => pick("cancel")}>
       <div className="card w-full max-w-sm p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true">
-        <h2 className="text-base font-semibold">저장하고 나가시겠습니까?</h2>
+        <h2 className="text-base font-semibold">{dlg.text.title}</h2>
         <p className="mt-1.5 text-sm text-slate-600">저장하지 않은 내용이 있습니다.</p>
         <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{dlg.what}</p>
         <div className="mt-4 flex flex-col gap-2">
           {dlg.canSave && (
             <button autoFocus className="btn-primary w-full justify-center" disabled={saving} onClick={() => pick("save")}>
-              저장하고 나가기
+              {dlg.text.save}
             </button>
           )}
           <button className="btn-outline w-full justify-center text-rose-600" onClick={() => pick("discard")}>
-            저장하지 않고 나가기
+            {dlg.text.discard}
           </button>
           <button className="btn-ghost w-full justify-center" onClick={() => pick("cancel")}>
             취소 (계속 작성)

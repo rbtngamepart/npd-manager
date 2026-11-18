@@ -16,6 +16,9 @@ const SIZES = [
   { v: "21px", label: "아주 크게" },
 ];
 
+/** Ctrl+1~4 순서: 보통 · 작게 · 크게 · 아주 크게 */
+const SIZE_KEYS = ["", "12px", "17px", "21px"];
+
 const COLORS = [
   { v: "", label: "기본" },
   { v: "#e11d48", label: "빨강" },
@@ -115,10 +118,10 @@ function Toolbar({ editor }: { editor: Editor }) {
   });
   const c = () => editor.chain().focus();
   return (
-    <div className="flex flex-wrap items-center gap-0.5 border-b border-black/[0.06] px-1.5 py-1">
+    <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-black/[0.06] bg-white px-1.5 py-1">
       <select
         className="h-7 rounded border-0 bg-transparent px-1 text-xs text-slate-600 hover:bg-black/[0.06]"
-        title="글자 크기"
+        title="글자 크기 · Ctrl+1 보통 · Ctrl+2 작게 · Ctrl+3 크게 · Ctrl+4 아주 크게"
         value={s.size}
         onChange={(e) => (e.target.value ? c().setFontSize(e.target.value).run() : c().unsetFontSize().run())}
       >
@@ -209,6 +212,7 @@ export function RichEditor({
   autoFocus,
   resetKey,
   large,
+  fill,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -222,6 +226,8 @@ export function RichEditor({
   resetKey?: string | number;
   /** 큰 창용: 글자를 조금 크게 */
   large?: boolean;
+  /** 부모 높이를 채우고, 글이 길어지면 본문만 스크롤 (도구 줄은 위에 고정) */
+  fill?: boolean;
 }) {
   const submitRef = useRef(onSubmit);
   submitRef.current = onSubmit;
@@ -256,6 +262,19 @@ export function RichEditor({
     editorProps: {
       attributes: { class: `rich min-w-0 outline-none ${large ? "px-4 py-3 text-[15px] leading-relaxed" : "px-3 py-2 text-sm"}`, style: `min-height:${minHeight}px` },
       handleKeyDown: (_v, e) => {
+        // 글자 크기 단축키: Ctrl+1 보통 · Ctrl+2 작게 · Ctrl+3 크게 · Ctrl+4 아주 크게 (Ctrl+Alt+숫자도 같음)
+        const m = /^Digit([1-4])$/.exec(e.code);
+        if (m && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+          const size = SIZE_KEYS[Number(m[1]) - 1];
+          const ed = editorRef.current;
+          if (ed) {
+            touch();
+            if (size) ed.chain().focus().setFontSize(size).run();
+            else ed.chain().focus().unsetFontSize().run();
+          }
+          e.preventDefault();
+          return true;
+        }
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && submitRef.current) {
           submitRef.current();
           return true;
@@ -268,6 +287,9 @@ export function RichEditor({
       changeRef.current(e.isEmpty ? "" : e.getHTML());
     },
   });
+
+  const editorRef = useRef<Editor | null>(null);
+  editorRef.current = editor;
 
   useEffect(() => {
     if (!editor) return;
@@ -284,7 +306,7 @@ export function RichEditor({
 
   return (
     <div
-      className="overflow-hidden rounded-lg border border-black/15 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/15"
+      className={`overflow-hidden rounded-lg border border-black/15 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/15 ${fill ? "flex h-full min-h-0 flex-col" : ""}`}
       onKeyDownCapture={touch}
       onMouseDownCapture={touch}
       onPasteCapture={touch}
@@ -294,7 +316,21 @@ export function RichEditor({
       onChangeCapture={touch}
     >
       {editor && <Toolbar editor={editor} />}
-      <EditorContent editor={editor} />
+      {fill ? (
+        <div
+          className="scroll-thin min-h-0 flex-1 cursor-text overflow-y-auto"
+          onMouseDown={(e) => {
+            // 글 아래 빈 곳을 눌러도 이어서 쓰기
+            if (e.target !== e.currentTarget || !editor) return;
+            e.preventDefault();
+            editor.commands.focus("end");
+          }}
+        >
+          <EditorContent editor={editor} />
+        </div>
+      ) : (
+        <EditorContent editor={editor} />
+      )}
     </div>
   );
 }
