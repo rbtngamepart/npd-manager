@@ -208,6 +208,7 @@ export function RichEditor({
   minHeight = 80,
   autoFocus,
   resetKey,
+  large,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -219,6 +220,8 @@ export function RichEditor({
   autoFocus?: boolean;
   /** 바뀌면 내용을 value로 다시 채움 */
   resetKey?: string | number;
+  /** 큰 창용: 글자를 조금 크게 */
+  large?: boolean;
 }) {
   const submitRef = useRef(onSubmit);
   submitRef.current = onSubmit;
@@ -251,7 +254,7 @@ export function RichEditor({
     ],
     content: value || "",
     editorProps: {
-      attributes: { class: "rich min-w-0 px-3 py-2 text-sm outline-none", style: `min-height:${minHeight}px` },
+      attributes: { class: `rich min-w-0 outline-none ${large ? "px-4 py-3 text-[15px] leading-relaxed" : "px-3 py-2 text-sm"}`, style: `min-height:${minHeight}px` },
       handleKeyDown: (_v, e) => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && submitRef.current) {
           submitRef.current();

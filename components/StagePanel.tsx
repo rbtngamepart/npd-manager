@@ -210,6 +210,8 @@ export function StagePanel({
   const [kind, setKind] = useState<LogKind>("memo");
   const [editLog, setEditLog] = useState<{ id: string; html: string } | null>(null);
   const [preview, setPreview] = useState<{ url: string; title: string; preview: string } | null>(null);
+  /** 진행 기록 큰 창: 새로 쓰기 / 남긴 기록 보기·수정 */
+  const [big, setBig] = useState<{ mode: "new" } | { mode: "log"; id: string } | null>(null);
   const { roleTypes, roleNames, labels } = useApp();
   const rolesReady = roleTypes !== null; // DB 업데이트(005) 전이면 역할 칸 숨김
   const v8 = stage.ref_code !== undefined; // DB 업데이트(008) 후
@@ -243,6 +245,7 @@ export function StagePanel({
     setNote("");
     setEditLog(null);
     setNoteKey((k) => k + 1);
+    setBig(null);
   }, [stage.id]);
 
   const base = pick(stage);
@@ -304,7 +307,26 @@ export function StagePanel({
     setNote("");
     setNoteKey((k) => k + 1);
     setKind("memo");
+    setBig((b) => (b?.mode === "new" ? null : b));
   }
+
+  // 보던 기록이 지워지면 큰 창도 닫음
+  useEffect(() => {
+    if (big?.mode === "log" && !logs.some((x) => x.id === big.id)) setBig(null);
+  }, [big, logs]);
+
+  // 큰 창: Esc로 닫기 (수정 중이면 닫지 않음)
+  useEffect(() => {
+    if (!big) return;
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (big.mode === "log" && editLog?.id === big.id) return;
+      e.stopPropagation();
+      setBig(null);
+    };
+    window.addEventListener("keydown", on, true);
+    return () => window.removeEventListener("keydown", on, true);
+  }, [big, editLog]);
 
   function markDone() {
     setF((p) => ({ ...p, actual_end: today, progress: 100, actual_start: p.actual_start ?? p.plan_start ?? today }));
@@ -740,6 +762,84 @@ export function StagePanel({
     </div>
   );
 
+  // ---- 진행 기록 공통 조각 ------------------------------------------------
+  const kindChips = (["memo", "issue", "decision"] as LogKind[]).map((k) => (
+    <button
+      key={k}
+      onClick={() => setKind(k)}
+      className={`rounded-full px-2 py-0.5 text-xs ring-1 ring-inset ${kind === k ? "bg-ink text-white ring-ink" : "text-slate-500 ring-black/10"}`}
+    >
+      {KIND[k].label}
+    </button>
+  ));
+  const logEditable = (l: StageLog) => l.kind !== "change" && !l.source;
+  const startEdit = (l: StageLog) => {
+    setEditLog({ id: l.id, html: l.body_html ?? textToHtml(l.body) });
+    setBig({ mode: "log", id: l.id });
+  };
+  function logHead(l: StageLog, inModal: boolean) {
+    const mine = l.author_id === myId;
+    const isEditing = editLog?.id === l.id;
+    return (
+      <div className={`flex items-center gap-1.5 text-slate-400 ${inModal ? "text-xs" : "text-[11px]"}`}>
+        <span className={`rounded px-1.5 py-px ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
+        {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
+        {l.source && l.ext_detached_at && (
+          <Tip content="지라·컨플루언스 원문에서 이 단계 코드가 지워졌습니다. 기록은 남겨두고 더 이상 갱신하지 않아요. 코드를 다시 적으면 다시 연결됩니다.">
+            <span tabIndex={0} className="cursor-help rounded bg-amber-50 px-1.5 py-px text-amber-700">연결 해제됨</span>
+          </Tip>
+        )}
+        <span>{l.source ? "자동 수집" : l.author_id ? displayName(profileById[l.author_id]) : "시스템"}</span>
+        <span>·</span>
+        <span title={new Date(l.created_at).toLocaleString("ko-KR")}>
+          {inModal ? new Date(l.created_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" }) : relativeTime(l.created_at)}
+        </span>
+        {l.edited_at && <span title={new Date(l.edited_at).toLocaleString("ko-KR")}>(수정됨)</span>}
+        {l.source && canEdit && onHideExt && (
+          <span className={`ml-auto ${inModal ? "flex" : "hidden group-hover:flex"}`}>
+            <button
+              className="text-rose-500"
+              onClick={() => {
+                if (!confirm("이 수집 기록을 지울까요?\n지라·컨플루언스 원문은 그대로이고, 이 기록은 다시 수집되지 않습니다.")) return;
+                onHideExt([l.id]);
+              }}
+            >
+              삭제
+            </button>
+          </span>
+        )}
+        {canEdit && mine && logEditable(l) && !isEditing && (
+          <span className={`ml-auto gap-2 ${inModal ? "flex" : "hidden group-hover:flex"}`}>
+            {v8 && (
+              <button className="hover:text-ink" onClick={() => startEdit(l)}>
+                수정
+              </button>
+            )}
+            <button
+              className="text-rose-500"
+              onClick={() => {
+                onDeleteLog(l.id);
+              }}
+            >
+              삭제
+            </button>
+          </span>
+        )}
+      </div>
+    );
+  }
+  function logBody(l: StageLog, inModal = false) {
+    return l.body_html ? (
+      <RichView
+        html={l.body_html}
+        className={inModal ? "text-[15px]! leading-relaxed" : "mt-0.5"}
+        onChange={canEdit && logEditable(l) ? (html) => onUpdateLog(l.id, htmlToText(html), html) : undefined}
+      />
+    ) : (
+      <p className={`whitespace-pre-wrap ${inModal ? "text-[15px] leading-relaxed" : "mt-0.5"} ${l.kind === "change" ? "text-xs text-slate-500" : ""}`}>{l.body}</p>
+    );
+  }
+
   const records = (
     <div className="space-y-5" key="records">
       {checks && (
@@ -785,10 +885,26 @@ export function StagePanel({
       )}
 
       <section className="space-y-3" data-tour="sp-log">
-        <h3 className="text-xs font-semibold text-slate-700">진행 기록</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-semibold text-slate-700">진행 기록</h3>
+          {canEdit && v8 && (
+            <Tip content="큰 창에서 기록을 씁니다. 지금 쓰던 내용은 그대로 옮겨가요.">
+              <button className="btn-ghost ml-auto px-1.5 py-0.5 text-[11px] text-slate-500" onClick={() => setBig({ mode: "new" })} data-tour="sp-log-big">
+                ⤢ 크게 쓰기
+              </button>
+            </Tip>
+          )}
+        </div>
         {canEdit && (
           <div className="space-y-2">
-            {v8 ? (
+            {big?.mode === "new" ? (
+              <button
+                className="w-full rounded-lg border border-dashed border-brand-500/40 bg-brand-500/[0.03] px-3 py-4 text-left text-xs text-slate-500"
+                onClick={() => setBig({ mode: "new" })}
+              >
+                큰 창에서 작성 중입니다…
+              </button>
+            ) : v8 ? (
               <RichEditor
                 value={note}
                 resetKey={`${stage.id}-${noteKey}`}
@@ -808,98 +924,36 @@ export function StagePanel({
                 }}
               />
             )}
-            <div className="flex items-center gap-2">
-              {(["memo", "issue", "decision"] as LogKind[]).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setKind(k)}
-                  className={`rounded-full px-2 py-0.5 text-xs ring-1 ring-inset ${kind === k ? "bg-ink text-white ring-ink" : "text-slate-500 ring-black/10"}`}
-                >
-                  {KIND[k].label}
+            {big?.mode !== "new" && (
+              <div className="flex items-center gap-2">
+                {kindChips}
+                <button className="btn-outline ml-auto py-1 text-xs" disabled={v8 ? isEmptyHtml(note) : !note.trim()} onClick={addLog}>
+                  기록 추가
                 </button>
-              ))}
-              <button className="btn-outline ml-auto py-1 text-xs" disabled={v8 ? isEmptyHtml(note) : !note.trim()} onClick={addLog}>
-                기록 추가
-              </button>
-            </div>
+              </div>
+            )}
           </div>
         )}
         {logs.length === 0 ? (
           <p className="text-xs text-slate-400">아직 기록이 없습니다.</p>
         ) : (
-          <ol className="space-y-3">
-            {logs.map((l) => {
-              const mine = l.author_id === myId;
-              const editable = l.kind !== "change" && !l.source;
-              const isEditing = editLog?.id === l.id;
-              return (
-                <li key={l.id} className={`group text-sm ${l.ext_detached_at ? "opacity-60" : ""}`}>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                    <span className={`rounded px-1.5 py-px ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
-                    {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
-                    {l.source && l.ext_detached_at && (
-                      <Tip content="지라·컨플루언스 원문에서 이 단계 코드가 지워졌습니다. 기록은 남겨두고 더 이상 갱신하지 않아요. 코드를 다시 적으면 다시 연결됩니다.">
-                        <span tabIndex={0} className="cursor-help rounded bg-amber-50 px-1.5 py-px text-amber-700">연결 해제됨</span>
-                      </Tip>
-                    )}
-                    <span>{l.source ? "자동 수집" : l.author_id ? displayName(profileById[l.author_id]) : "시스템"}</span>
-                    <span>·</span>
-                    <span title={new Date(l.created_at).toLocaleString("ko-KR")}>{relativeTime(l.created_at)}</span>
-                    {l.edited_at && <span title={new Date(l.edited_at).toLocaleString("ko-KR")}>(수정됨)</span>}
-                    {l.source && canEdit && onHideExt && (
-                      <span className="ml-auto hidden group-hover:flex">
-                        <button
-                          className="text-rose-500"
-                          onClick={() => confirm("이 수집 기록을 지울까요?\n지라·컨플루언스 원문은 그대로이고, 이 기록은 다시 수집되지 않습니다.") && onHideExt([l.id])}
-                        >
-                          삭제
-                        </button>
-                      </span>
-                    )}
-                    {mine && editable && !isEditing && (
-                      <span className="ml-auto hidden gap-2 group-hover:flex">
-                        {v8 && (
-                          <button className="hover:text-ink" onClick={() => setEditLog({ id: l.id, html: l.body_html ?? textToHtml(l.body) })}>
-                            수정
-                          </button>
-                        )}
-                        <button className="text-rose-500" onClick={() => onDeleteLog(l.id)}>
-                          삭제
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                  {isEditing ? (
-                    <div className="mt-1 space-y-1.5">
-                      <RichEditor value={editLog.html} resetKey={l.id} onChange={(html) => setEditLog({ id: l.id, html })} autoFocus minHeight={48} />
-                      <div className="flex justify-end gap-1">
-                        <button className="btn-ghost py-0.5 text-xs" onClick={() => setEditLog(null)}>
-                          취소
-                        </button>
-                        <button
-                          className="btn-primary py-0.5 text-xs"
-                          disabled={isEmptyHtml(editLog.html)}
-                          onClick={async () => {
-                            await onUpdateLog(l.id, htmlToText(editLog.html), editLog.html);
-                            setEditLog(null);
-                          }}
-                        >
-                          저장
-                        </button>
-                      </div>
-                    </div>
-                  ) : l.body_html ? (
-                    <RichView
-                      html={l.body_html}
-                      className="mt-0.5"
-                      onChange={canEdit && editable ? (html) => onUpdateLog(l.id, htmlToText(html), html) : undefined}
-                    />
-                  ) : (
-                    <p className={`mt-0.5 whitespace-pre-wrap ${l.kind === "change" ? "text-xs text-slate-500" : ""}`}>{l.body}</p>
-                  )}
-                </li>
-              );
-            })}
+          <ol className="space-y-1">
+            {logs.map((l) => (
+              <li
+                key={l.id}
+                className={`group -mx-2 cursor-pointer rounded-lg px-2 py-1.5 text-sm transition hover:bg-slate-50 ${l.ext_detached_at ? "opacity-60" : ""} ${big?.mode === "log" && big.id === l.id ? "bg-brand-500/[0.06]" : ""}`}
+                onClick={(e) => {
+                  // 링크·체크박스·버튼을 누른 것은 그대로 두고, 나머지는 크게 보기
+                  if ((e.target as HTMLElement).closest("a, button, input, label")) return;
+                  if (window.getSelection()?.toString()) return; // 글자를 드래그해 고르는 중
+                  setBig({ mode: "log", id: l.id });
+                }}
+                title="눌러서 크게 보기"
+              >
+                {logHead(l, false)}
+                <div className="max-h-48 overflow-hidden">{logBody(l)}</div>
+              </li>
+            ))}
           </ol>
         )}
       </section>
@@ -1004,6 +1058,121 @@ export function StagePanel({
           </button>
         </div>
       )}
+      {/* 진행 기록 큰 창 */}
+      {big && (() => {
+        const bl = big.mode === "log" ? logs.find((x) => x.id === big.id) : undefined;
+        if (big.mode === "log" && !bl) return null;
+        const idx = bl ? logs.indexOf(bl) : -1;
+        const editing = !!bl && editLog?.id === bl.id;
+        const close = () => {
+          if (editing && editLog && editLog.html !== (bl!.body_html ?? textToHtml(bl!.body)) && !confirm("수정한 내용을 저장하지 않고 닫을까요?")) return;
+          if (editing) setEditLog(null);
+          setBig(null);
+        };
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[1px]" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+            <div className="flex h-[min(860px,92vh)] w-[min(960px,100%)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" role="dialog" aria-label="진행 기록">
+              <div className="flex items-center gap-2 border-b border-black/[0.06] px-5 py-3">
+                <span className="text-sm font-semibold">{bl ? "진행 기록" : "진행 기록 쓰기"}</span>
+                <span className="min-w-0 truncate text-xs text-slate-400">· {stage.name}</span>
+                {bl && !editing && logs.length > 1 && (
+                  <div className="ml-auto flex items-center gap-1 text-xs text-slate-400">
+                    <button className="btn-ghost px-1.5 py-0.5 text-xs" disabled={idx <= 0} onClick={() => setBig({ mode: "log", id: logs[idx - 1].id })} title="더 최근 기록">
+                      ↑
+                    </button>
+                    <span className="tabular-nums">
+                      {idx + 1}/{logs.length}
+                    </span>
+                    <button className="btn-ghost px-1.5 py-0.5 text-xs" disabled={idx >= logs.length - 1} onClick={() => setBig({ mode: "log", id: logs[idx + 1].id })} title="더 지난 기록">
+                      ↓
+                    </button>
+                  </div>
+                )}
+                <button className={`btn-ghost px-2 ${bl && !editing && logs.length > 1 ? "" : "ml-auto"}`} onClick={close} aria-label="닫기">
+                  ✕
+                </button>
+              </div>
+
+              {bl ? (
+                <>
+                  <div className="border-b border-black/[0.04] px-5 py-2.5">{logHead(bl, true)}</div>
+                  {editing ? (
+                    <div className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
+                      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+                        <RichEditor
+                          value={editLog!.html}
+                          resetKey={`big-${bl.id}`}
+                          onChange={(html) => setEditLog({ id: bl.id, html })}
+                          onSubmit={async () => {
+                            if (isEmptyHtml(editLog!.html)) return;
+                            await onUpdateLog(bl.id, htmlToText(editLog!.html), editLog!.html);
+                            setEditLog(null);
+                          }}
+                          autoFocus
+                          large
+                          minHeight={360}
+                        />
+                      </div>
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="mr-auto text-[11px] text-slate-400">Ctrl+Enter 저장</span>
+                        <button className="btn-ghost text-sm" onClick={() => setEditLog(null)}>
+                          취소
+                        </button>
+                        <button
+                          className="btn-primary text-sm"
+                          disabled={isEmptyHtml(editLog!.html)}
+                          onClick={async () => {
+                            await onUpdateLog(bl.id, htmlToText(editLog!.html), editLog!.html);
+                            setEditLog(null);
+                          }}
+                        >
+                          저장
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-4"
+                      onDoubleClick={(e) => {
+                        if (!canEdit || !v8 || bl.author_id !== myId || !logEditable(bl)) return;
+                        if ((e.target as HTMLElement).closest("a, button, input, label")) return;
+                        startEdit(bl);
+                      }}
+                    >
+                      {logBody(bl, true)}
+                      {canEdit && v8 && bl.author_id === myId && logEditable(bl) && (
+                        <p className="mt-6 text-[11px] text-slate-300">두 번 누르거나 위 [수정]을 누르면 고칠 수 있어요.</p>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
+                  <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+                    <RichEditor
+                      value={note}
+                      resetKey={`big-new-${stage.id}`}
+                      onChange={setNote}
+                      onSubmit={addLog}
+                      autoFocus
+                      large
+                      minHeight={360}
+                      placeholder="협의 내용, 진행 메모를 남겨주세요 (Ctrl+Enter 등록)"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {kindChips}
+                    <span className="ml-2 text-[11px] text-slate-400">Ctrl+Enter 등록 · 닫아도 쓰던 내용은 남아요</span>
+                    <button className="btn-primary ml-auto text-sm" disabled={isEmptyHtml(note)} onClick={addLog}>
+                      기록 추가
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </aside>
   );
 }
