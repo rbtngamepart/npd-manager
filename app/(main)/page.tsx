@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
 import { tourSeen, markTourSeen, useTour } from "@/components/Tour";
+import { PortfolioGantt } from "@/components/PortfolioGantt";
 import { Empty, ProgressBar, StatusChip, StatusDot } from "@/components/ui";
 import { diffDays, full, short, today as todayFn } from "@/lib/dates";
 import { stageFinalStatus, summarize, type AutoStatus } from "@/lib/status";
@@ -20,6 +21,22 @@ export default function Dashboard() {
   const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState<"all" | "attention">("all");
   const [loading, setLoading] = useState(true);
+  const [view, setViewState] = useState<"table" | "gantt">("table");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("npd-dash-view") === "gantt") setViewState("gantt");
+    } catch {
+      /* 무시 */
+    }
+  }, []);
+  const setView = (v: "table" | "gantt") => {
+    setViewState(v);
+    try {
+      localStorage.setItem("npd-dash-view", v);
+    } catch {
+      /* 무시 */
+    }
+  };
   const [welcome, setWelcome] = useState(false);
   const { openMenu, start } = useTour();
   const today = todayFn();
@@ -144,9 +161,20 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-        <section className="card overflow-hidden" data-tour="project-table">
+      <div className={`grid gap-6 ${view === "gantt" ? "" : "xl:grid-cols-[1fr_340px]"}`}>
+        <section className="card min-w-0 overflow-hidden" data-tour="project-table">
           <div className="flex flex-wrap items-center gap-2 border-b border-black/[0.06] px-4 py-2.5" data-tour="dash-filter">
+            <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="dash-view">
+              {(["table", "gantt"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`rounded-md px-2.5 py-1 ${view === v ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}
+                >
+                  {v === "table" ? "▤ 표" : "▬ 간트"}
+                </button>
+              ))}
+            </div>
             <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
               {(["all", "attention"] as const).map((f) => (
                 <button
@@ -186,6 +214,8 @@ export default function Dashboard() {
                 )}
               </Empty>
             </div>
+          ) : view === "gantt" ? (
+            <PortfolioGantt rows={rows.map((r) => ({ ...r, stages: byProject[r.p.id] ?? [] }))} today={today} />
           ) : (
             <div className="overflow-x-auto scroll-thin">
               <table className="w-full min-w-[980px]">
