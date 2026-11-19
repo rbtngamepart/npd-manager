@@ -12,7 +12,8 @@ import { mindmapText, withRootTitle, type MindMapHandle } from "@/components/Min
 import { Help, Tip } from "@/components/Tip";
 import { useUnsaved } from "@/lib/unsaved";
 import { relativeTime, today as todayFn } from "@/lib/dates";
-import type { Note, NoteCategory, NoteKind, Project, Stage } from "@/lib/types";
+import type { Note, NoteCategory, NoteFolder, NoteKind, Project, Stage } from "@/lib/types";
+import { NoteTree } from "@/components/NoteTree";
 
 const MindMap = dynamic(() => import("@/components/MindMap").then((m) => m.MindMap), {
   ssr: false,
@@ -62,6 +63,29 @@ function Notes() {
   const [proj, setProj] = useState<string>("all");
   const [hideList, setHideList] = useState(false);
 
+  // 폴더 (업데이트 015)
+  const [folders, setFolders] = useState<NoteFolder[]>([]);
+  const [noFolders, setNoFolders] = useState(false);
+  const noFoldersRef = useRef(false);
+  noFoldersRef.current = noFolders;
+  const [curFolder, setCurFolder] = useState<string | null>(null);
+  const [view, setViewState] = useState<"tree" | "date">("tree");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("npd-notes-view") === "date") setViewState("date");
+    } catch {
+      /* 무시 */
+    }
+  }, []);
+  const setView = (v: "tree" | "date") => {
+    setViewState(v);
+    try {
+      localStorage.setItem("npd-notes-view", v);
+    } catch {
+      /* 무시 */
+    }
+  };
+
   // 열린 메모
   const [draft, setDraft] = useState<Note | null>(null);
   const [rk, setRk] = useState(0); // 편집기 다시 채우기
@@ -79,15 +103,27 @@ function Notes() {
 
   // ---- 불러오기 ----------------------------------------------------------
   const loadList = useCallback(async () => {
-    const { data, error } = await supabase().from("notes").select(LIST_COLS).order("note_date", { ascending: false }).order("updated_at", { ascending: false });
+    const q = (cols: string) => supabase().from("notes").select(cols).order("note_date", { ascending: false }).order("updated_at", { ascending: false });
+    let { data, error } = await q(noFoldersRef.current ? LIST_COLS : LIST_COLS + ",folder_id");
+    if (error && /folder_id/.test(error.message)) {
+      setNoFolders(true); // 015 전: 폴더 없이
+      ({ data, error } = await q(LIST_COLS));
+    }
     if (error) {
       if (/notes|relation|schema cache/i.test(error.message)) setMissing(true);
-    } else setNotes((data ?? []) as Note[]);
+    } else setNotes((data ?? []) as unknown as Note[]);
     setLoading(false);
+  }, []);
+
+  const loadFolders = useCallback(async () => {
+    const { data, error } = await supabase().from("note_folders").select("*");
+    if (error) setNoFolders(true);
+    else setFolders((data ?? []) as NoteFolder[]);
   }, []);
 
   useEffect(() => {
     loadList();
+    loadFolders();
     (async () => {
       const sb = supabase();
       const [p, s] = await Promise.all([
@@ -97,12 +133,13 @@ function Notes() {
       setProjects((p.data ?? []) as ProjectLite[]);
       setStages((s.data ?? []) as StageLite[]);
     })();
-  }, [loadList]);
+  }, [loadList, loadFolders]);
 
   const openNote = useCallback(async (id: string) => {
     const { data } = await supabase().from("notes").select("*").eq("id", id).maybeSingle();
     const n = (data as Note | null) ?? null;
     setDraft(n);
+    if (n) setCurFolder(n.folder_id ?? null);
     base.current = n?.updated_at ?? null;
     setDirty(false);
     setConflict(null);
@@ -133,10 +170,11 @@ function Notes() {
         project_id: d.project_id,
         stage_ids: d.stage_ids,
         visibility: d.visibility,
+        ...(noFoldersRef.current ? {} : { folder_id: d.folder_id ?? null }),
       };
       let qy = supabase().from("notes").update(patch).eq("id", d.id);
       if (!force && base.current) qy = qy.eq("updated_at", base.current);
-      const { data, error } = await qy.select(LIST_COLS).maybeSingle();
+      const { data, error } = await qy.select(noFoldersRef.current ? LIST_COLS : LIST_COLS + ",folder_id").maybeSingle();
       if (error) {
         setSaveState("error");
         return false;
@@ -148,7 +186,7 @@ function Notes() {
         setSaveState("error");
         return false;
       }
-      const row = data as Note;
+      const row = data as unknown as Note;
       base.current = row.updated_at;
       if (draftRef.current === d) setDirty(false);
       setSaveState("saved");
@@ -186,6 +224,7 @@ function Notes() {
   useEffect(() => {
     if (missing) return;
     let t: ReturnType<typeof setTimeout> | null = null;
+    let t2: ReturnType<typeof setTimeout> | null = null;
     const ch = supabase()
       .channel("notes")
       .on("postgres_changes", { event: "*", schema: "public", table: "notes" }, (pl) => {
@@ -197,17 +236,22 @@ function Notes() {
         if (row.updated_at && row.updated_at === base.current) return;
         if (!dirtyRef.current) openNote(d.id); // 내가 안 고치고 있으면 새 내용으로
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "note_folders" }, () => {
+        if (t2) clearTimeout(t2);
+        t2 = setTimeout(loadFolders, 300);
+      })
       .subscribe();
     return () => {
       if (t) clearTimeout(t);
+      if (t2) clearTimeout(t2);
       supabase().removeChannel(ch);
     };
-  }, [missing, loadList, openNote, me?.id]);
+  }, [missing, loadList, loadFolders, openNote, me?.id]);
 
   // ---- 새 메모 ----------------------------------------------------------
   const creating = useRef(false);
   const create = useCallback(
-    async (kind: NoteKind, link?: { project?: string | null; stage?: string | null }) => {
+    async (kind: NoteKind, link?: { project?: string | null; stage?: string | null }, folder: string | null = curFolder) => {
       if (creating.current) return;
       creating.current = true;
       if (timer.current) clearTimeout(timer.current);
@@ -222,6 +266,7 @@ function Notes() {
           project_id: link?.project ?? stageRow?.project_id ?? (proj !== "all" && proj !== "none" ? proj : null),
           stage_ids: link?.stage ? [link.stage] : [],
           note_date: todayFn(),
+          ...(noFoldersRef.current || link?.stage ? {} : { folder_id: folder }),
         })
         .select("*")
         .single();
@@ -233,7 +278,7 @@ function Notes() {
       setNotes((ns) => [data as Note, ...ns]);
       router.replace(`${path}?id=${(data as Note).id}&fresh=1`);
     },
-    [cat, scope, proj, stages, router, save, path]
+    [cat, scope, proj, stages, router, save, path, curFolder]
   );
 
   // 단계 패널에서 [+ 메모] → /notes?new=doc&project=..&stage=..
@@ -254,6 +299,83 @@ function Notes() {
     router.replace(path);
   }
 
+  // ---- 폴더 ------------------------------------------------------------
+  async function createFolder(parent: string | null): Promise<string | undefined> {
+    const par = folders.find((f) => f.id === parent);
+    const { data, error } = await supabase()
+      .from("note_folders")
+      .insert({ name: "새 폴더", parent_id: parent, visibility: par?.visibility === "private" ? "private" : "shared" })
+      .select("*")
+      .single();
+    if (error || !data) {
+      alert("폴더를 만들지 못했습니다.\n" + (error?.message ?? ""));
+      return;
+    }
+    setFolders((fs) => [...fs, data as NoteFolder]);
+    setCurFolder((data as NoteFolder).id);
+    return (data as NoteFolder).id;
+  }
+  async function updateFolder(id: string, patch: Partial<NoteFolder>) {
+    const prev = folders;
+    setFolders((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+    const { data, error } = await supabase().from("note_folders").update(patch).eq("id", id).select("id");
+    if (error || !data?.length) {
+      setFolders(prev);
+      alert(error?.message.includes("자기 안") ? "폴더를 자기 안(하위 폴더)으로 옮길 수 없습니다." : "폴더를 바꾸지 못했습니다. 권한을 확인하세요.");
+    }
+  }
+  async function deleteFolder(f: NoteFolder) {
+    const inside = notes.filter((n) => n.folder_id === f.id).length;
+    const sub = folders.filter((x) => x.parent_id === f.id).length;
+    const where = f.parent_id ? "위 폴더로" : "폴더 밖으로";
+    if (!confirm(`'${f.name}' 폴더를 지울까요?${inside || sub ? `\n안에 있는 ${[inside && `메모 ${inside}개`, sub && `하위 폴더 ${sub}개`].filter(Boolean).join(", ")}은(는) 지워지지 않고 ${where} 옮겨집니다.` : ""}`)) return;
+    if (timer.current) clearTimeout(timer.current);
+    if (dirtyRef.current) await save(); // 고치던 내용 먼저 저장
+    const { error } = await supabase().rpc("note_folder_delete", { p_id: f.id });
+    if (error) return alert(error.message);
+    if (curFolder === f.id) setCurFolder(f.parent_id);
+    // 열린 메모가 그 폴더에 있었으면 서버에서 옮겨졌으니 다시 불러옴 (저장 충돌 방지)
+    const d = draftRef.current;
+    if (d?.folder_id === f.id) {
+      openNote(d.id);
+    }
+    loadFolders();
+    loadList();
+  }
+  async function moveNote(noteId: string, folderId: string | null) {
+    if (draftRef.current?.id === noteId) return change({ folder_id: folderId });
+    const prev = notes;
+    setNotes((ns) => ns.map((n) => (n.id === noteId ? { ...n, folder_id: folderId } : n)));
+    const { data, error } = await supabase().from("notes").update({ folder_id: folderId }).eq("id", noteId).select("id");
+    if (error || !data?.length) {
+      setNotes(prev);
+      alert("이 메모를 옮길 권한이 없습니다. (작성자나 게임파트만 옮길 수 있어요)");
+    }
+  }
+  const folderPath = useCallback(
+    (id: string | null | undefined): string => {
+      const names: string[] = [];
+      let cur = id ? folders.find((f) => f.id === id) : undefined;
+      let guard = 0;
+      while (cur && guard++ < 50) {
+        names.unshift(cur.name);
+        cur = cur.parent_id ? folders.find((f) => f.id === cur!.parent_id) : undefined;
+      }
+      return names.join(" › ");
+    },
+    [folders]
+  );
+  const folderOptions = useMemo(() => {
+    const kids: Record<string, NoteFolder[]> = {};
+    const ids = new Set(folders.map((f) => f.id));
+    folders.forEach((f) => (kids[f.parent_id && ids.has(f.parent_id) ? f.parent_id : "root"] ??= []).push(f));
+    const out: { f: NoteFolder; depth: number }[] = [];
+    const walk = (pid: string, d: number) =>
+      (kids[pid] ?? []).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "ko", { numeric: true })).forEach((f) => (out.push({ f, depth: d }), d < 30 && walk(f.id, d + 1)));
+    walk("root", 0);
+    return out;
+  }, [folders]);
+
   // ---- 목록 ------------------------------------------------------------
   const projectName = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
   const stageById = useMemo(() => Object.fromEntries(stages.map((s) => [s.id, s])), [stages]);
@@ -268,12 +390,13 @@ function Notes() {
       if (proj === "none" && n.project_id) return false;
       if (proj !== "all" && proj !== "none" && n.project_id !== proj) return false;
       if (k) {
-        const hay = `${n.title} ${n.body_text ?? ""} ${n.project_id ? projectName[n.project_id] ?? "" : ""} ${n.stage_ids.map((s) => stageById[s]?.name ?? "").join(" ")}`.toLowerCase();
+        const hay = `${n.title} ${folderPath(n.folder_id)} ${n.body_text ?? ""} ${n.project_id ? projectName[n.project_id] ?? "" : ""} ${n.stage_ids.map((s) => stageById[s]?.name ?? "").join(" ")}`.toLowerCase();
         if (!hay.includes(k)) return false;
       }
       return true;
     });
-  }, [notes, q, cat, scope, proj, me?.id, projectName, stageById, selectedId]);
+  }, [notes, q, cat, scope, proj, me?.id, projectName, stageById, selectedId, folderPath]);
+  const filtering = !!q.trim() || cat !== "all" || scope !== "all" || proj !== "all";
 
   const grouped = useMemo(() => {
     const g: { month: string; items: Note[] }[] = [];
@@ -311,7 +434,7 @@ function Notes() {
               <h1 className="text-base font-semibold">메모</h1>
               <Help content="회의록, 아이디어, 자유 메모를 남기는 곳입니다. 프로젝트와 상관없이 쓸 수 있고, 필요하면 프로젝트·단계에 연결해 그 단계 상세에서도 볼 수 있어요." />
               <div className="ml-auto flex gap-1" data-tour="notes-new">
-                <button className="btn-primary px-2.5 py-1 text-xs" onClick={() => create("doc")}>
+                <button className="btn-primary px-2.5 py-1 text-xs" onClick={() => create("doc")} title={curFolder && !noFolders ? `'${folderPath(curFolder)}' 폴더에 만들기` : undefined}>
                   📄 문서
                 </button>
                 <button className="btn-outline px-2.5 py-1 text-xs" onClick={() => create("mindmap")}>
@@ -350,9 +473,42 @@ function Notes() {
               </select>
             </div>
           </div>
+          {!noFolders && (
+            <div className="flex items-center gap-1 border-b border-black/[0.06] px-3 py-1.5" data-tour="notes-view">
+              <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
+                {(["tree", "date"] as const).map((v) => (
+                  <button key={v} onClick={() => setView(v)} className={`rounded-md px-2 py-0.5 ${view === v ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}>
+                    {v === "tree" ? "📁 폴더" : "🕒 날짜순"}
+                  </button>
+                ))}
+              </div>
+              {view === "tree" && <span className="ml-auto text-[10px] text-slate-400">끌어서 폴더로 옮기기</span>}
+            </div>
+          )}
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
             {loading ? (
               <p className="p-6 text-center text-sm text-slate-400">불러오는 중…</p>
+            ) : !noFolders && view === "tree" ? (
+              <NoteTree
+                folders={folders}
+                notes={shown}
+                filtering={filtering}
+                selectedId={selectedId}
+                curFolder={curFolder}
+                meId={me?.id}
+                isGamePart={!!me?.is_game_part}
+                isAdmin={!!me?.is_admin}
+                draft={draft}
+                onOpen={(id) => go(id)}
+                onSelectFolder={setCurFolder}
+                onMoveNote={moveNote}
+                onMoveFolder={(id, parent) => updateFolder(id, { parent_id: parent })}
+                onCreateFolder={createFolder}
+                onRename={(id, name) => updateFolder(id, { name })}
+                onDelete={deleteFolder}
+                onToggleVis={(f) => updateFolder(f.id, { visibility: f.visibility === "shared" ? "private" : "shared" })}
+                onNewNote={(kind, folderId) => create(kind, undefined, folderId)}
+              />
             ) : shown.length === 0 ? (
               <p className="p-6 text-center text-sm text-slate-400">{notes.length ? "조건에 맞는 메모가 없습니다." : "아직 메모가 없습니다. 위에서 새로 만들어 보세요."}</p>
             ) : (
@@ -477,7 +633,7 @@ function Notes() {
                     if (!html) return;
                     const { data } = await supabase()
                       .from("notes")
-                      .insert({ kind: "doc", title: `${draft.title || "마인드맵"} (개요)`, category: draft.category, body_html: html, body_text: htmlToText(html), project_id: draft.project_id, stage_ids: draft.stage_ids, visibility: draft.visibility, note_date: draft.note_date })
+                      .insert({ kind: "doc", title: `${draft.title || "마인드맵"} (개요)`, category: draft.category, body_html: html, body_text: htmlToText(html), project_id: draft.project_id, stage_ids: draft.stage_ids, visibility: draft.visibility, note_date: draft.note_date, ...(noFolders ? {} : { folder_id: draft.folder_id ?? null }) })
                       .select("id")
                       .single();
                     if (data) go((data as { id: string }).id);
@@ -513,6 +669,28 @@ function Notes() {
                   {draft.updated_by && draft.updated_by !== draft.author_id && ` · ${displayName(profileById[draft.updated_by])} 수정`} · {relativeTime(draft.updated_at)}
                 </span>
               </div>
+
+              {!noFolders && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-slate-400">폴더</span>
+                  <select
+                    className="max-w-[320px] rounded-md border border-black/10 bg-white px-1.5 py-0.5 text-xs disabled:opacity-70"
+                    value={draft.folder_id ?? ""}
+                    disabled={!canEdit}
+                    onChange={(e) => change({ folder_id: e.target.value || null })}
+                  >
+                    <option value="">— 폴더 밖 —</option>
+                    {folderOptions.map(({ f, depth }) => (
+                      <option key={f.id} value={f.id}>
+                        {"\u00a0\u00a0".repeat(depth)}
+                        {depth ? "└ " : ""}
+                        {f.name}
+                        {f.visibility === "private" ? " 🔒" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <NoteLinks
                 projects={projects}

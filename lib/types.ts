@@ -238,8 +238,21 @@ export interface Note {
   project_id: string | null;
   stage_ids: string[];
   visibility: "shared" | "private";
+  /** 업데이트 015 */
+  folder_id?: string | null;
   author_id: string | null;
   updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoteFolder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  sort_order: number;
+  visibility: "shared" | "private";
+  owner_id: string | null;
   created_at: string;
   updated_at: string;
 }
