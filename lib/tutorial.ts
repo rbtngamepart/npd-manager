@@ -5,7 +5,7 @@
 // event   : 화면에 보내는 동작 (탭 전환, 단계 패널 열기 등)
 // role    : 이 권한이 있을 때만 보여줌
 
-export type TourRoute = "/" | "/projects/new" | "/templates" | "/admin" | "/departments" | "/calendar" | "/atlassian" | "project";
+export type TourRoute = "/" | "/projects/new" | "/templates" | "/admin" | "/departments" | "/notes" | "/calendar" | "/atlassian" | "project";
 export type Role = "editor" | "gamepart" | "admin";
 
 export type TourEvent =
@@ -424,6 +424,36 @@ export const CHAPTERS: Chapter[] = [
         target: "dept-view",
         title: "간트 / 목록",
         body: "· 간트: 여러 프로젝트의 일정을 한 줄로 이어서 보기 (이름 아래 프로젝트명)\n· 목록: 상태·역할(담당/협업)·다음 액션을 표로\n\n단계를 누르면 해당 프로젝트의 단계 상세가 열립니다. 다른 부서와 협의할 때 이 화면을 함께 보면 편해요.",
+      },
+    ],
+  },
+  {
+    id: "notes",
+    title: "메모 · 마인드맵",
+    desc: "회의록·아이디어를 자유롭게, 필요하면 단계에 연결",
+    minutes: 1,
+    steps: [
+      {
+        route: "/notes",
+        target: "notes-new",
+        title: "새 메모",
+        body: "프로젝트와 상관없이 자유롭게 남기는 곳이에요. 전체 부서 미팅 회의록, 떠오른 아이디어, 그냥 메모 모두 여기에.\n\n· 📄 문서: 진행 기록과 같은 서식 편집기 (글자 크기 Ctrl+1~4, ☑ 체크박스)\n· 🧠 마인드맵: 생각을 가지처럼 펼치기\n\n쓰는 동안 자동으로 저장됩니다.",
+      },
+      {
+        route: "/notes",
+        target: "notes-list",
+        title: "목록 · 찾기",
+        body: "날짜 순으로 월별로 모입니다. 회의 / 아이디어 / 메모 종류, 내가 쓴 메모, 프로젝트로 걸러 보고, 제목·내용으로 검색할 수 있어요.\n\n메모마다 👥 팀 공개(게임파트가 함께 고칠 수 있음) 또는 🔒 나만 보기를 고를 수 있습니다.",
+      },
+      {
+        route: "/notes",
+        title: "프로젝트·단계에 연결",
+        body: "메모 위쪽 [+ 프로젝트·단계 연결]에서 프로젝트를 고르고 관련 단계를 체크하세요. 그 단계의 상세 패널 '메모' 칸에 이 메모가 보이고, 단계 상세에서 [+ 문서] [+ 마인드맵]으로 바로 연결된 메모를 만들 수도 있어요.\n\n회의 메모는 [회의록 틀 넣기]로 참석자·안건·논의·결정·할 일 틀을 한 번에 넣을 수 있습니다.",
+      },
+      {
+        route: "/notes",
+        title: "마인드맵 쓰는 법",
+        body: "· Tab: 하위 생각 추가\n· Enter: 같은 단계에 추가 (Shift+Enter는 위에)\n· F2 또는 두 번 눌러 고치기, Delete로 지우기\n· 끌어서 다른 가지로 옮기기, Ctrl+Z 되돌리기\n· 오른쪽 클릭 메뉴, 빈 곳을 끌어 화면 이동, Ctrl+휠 확대\n\n⋯ 메뉴에서 이미지(PNG)로 저장하거나, 개요를 새 문서로 만들 수 있어요.",
       },
     ],
   },

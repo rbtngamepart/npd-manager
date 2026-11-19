@@ -13,6 +13,7 @@ import type { DeptColorFn } from "@/lib/deptColors";
 import type { CalendarEvent } from "@/lib/types";
 import { RichEditor, RichView, htmlToText, isEmptyHtml, textToHtml } from "./RichText";
 import { LabelPicker } from "./Labels";
+import { StageNotes } from "./StageNotes";
 import { StageChecklist, StageDeps, StageExternal, StageLinks } from "./StageExtras";
 import { effectiveGroup, groupOptions, groupPath, stagePath } from "@/lib/groups";
 import { askSave, useUnsaved } from "@/lib/unsaved";
@@ -906,6 +907,7 @@ export function StagePanel({
         />
       )}
       {links && <StageLinks projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
+      <StageNotes projectId={stage.project_id} stageId={stage.id} canEdit={canEdit} />
       <StageExternal logs={logs} canEdit={canEdit} onHide={onHideExt} deleted={deletedExt} onRestore={onRestoreExt} />
 
       {calEvents.length > 0 && (

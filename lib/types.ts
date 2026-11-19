@@ -222,3 +222,24 @@ export interface CalendarSourceInfo {
   event_count: number;
   created_at: string;
 }
+
+// ---- 메모 (업데이트 014) -------------------------------------------------
+export type NoteKind = "doc" | "mindmap";
+export type NoteCategory = "memo" | "meeting" | "idea";
+export interface Note {
+  id: string;
+  title: string;
+  kind: NoteKind;
+  category: NoteCategory;
+  note_date: string;
+  body_html: string | null;
+  body_text: string | null;
+  mindmap: unknown | null;
+  project_id: string | null;
+  stage_ids: string[];
+  visibility: "shared" | "private";
+  author_id: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}

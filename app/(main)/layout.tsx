@@ -85,6 +85,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const nav = [
     { href: "/", label: "대시보드" },
     { href: "/departments", label: "부서별 일정" },
+    { href: "/notes", label: "메모" },
     { href: "/calendar", label: "캘린더 연동" },
     { href: "/atlassian", label: "지라 연동" },
     { href: "/templates", label: "템플릿" },
