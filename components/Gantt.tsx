@@ -559,10 +559,20 @@ export function Gantt({
       const x2 = x(bs);
       const late = ae >= bs;
       let path: string;
+      const down = yb > ya;
+      const edgeY = ya + (down ? 8 : -8); // 앞 막대의 아래(위) 가장자리
+      const aStart = a.plan_start ? x(a.plan_start) : x1 - 16;
+      // 막대 끝 조금 안쪽에서 바로 내려와 오른쪽으로 들어가는 자리
+      const sx = Math.max(aStart + 3, Math.min(x1 - 6, x2 - 8));
       if (x2 - x1 >= 14) {
+        // 사이가 떠 있으면: 끝에서 오른쪽으로 나가 내려가서 들어감
         path = `M${x1},${ya} H${x1 + 6} V${yb} H${x2 - 2}`;
+      } else if (x2 - sx >= 6) {
+        // 바로 이어지면: 앞 막대 끝에서 곧게 내려와 다음 막대로 (되돌아가는 꺾임 없음)
+        path = `M${sx},${edgeY} V${yb} H${x2 - 2}`;
       } else {
-        const mid = yb > ya ? yb - ROW / 2 + 4 : yb + ROW / 2 - 4;
+        // 겹치면(앞 단계가 끝나기 전에 시작): 돌아서 들어감 — 빨간 점선으로 경고
+        const mid = down ? yb - ROW / 2 + 4 : yb + ROW / 2 - 4;
         path = `M${x1},${ya} H${x1 + 6} V${mid} H${x2 - 10} V${yb} H${x2 - 2}`;
       }
       return { key: d.pred_id + d.succ_id, path, late, title: `${a.name} → ${b.name}${late ? " (겹침: 앞 단계가 끝나기 전에 시작)" : ""}` };
