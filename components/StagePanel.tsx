@@ -645,7 +645,7 @@ export function StagePanel({
           </div>
         </div>
       )}
-      <div>
+      <div data-tour="sp-desc">
         <div className="flex items-center">
           <label className="label">주요내용 (단계 설명)</label>
           {v8 && !ro && (
