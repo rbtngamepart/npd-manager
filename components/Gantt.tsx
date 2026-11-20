@@ -593,6 +593,15 @@ export function Gantt({
       } else if (x2 - sx >= 6) {
         // 바로 이어지면: 앞 막대 끝에서 곧게 내려와 다음 막대로 (되돌아가는 꺾임 없음)
         path = `M${sx},${edgeY} V${yb} H${x2 - 2}`;
+      } else if (!late) {
+        // 앞 막대가 짧아(1일 등) 옆으로 들어갈 틈이 없으면: 계단처럼 앞으로만 내려가 다음 막대 위(아래) 가장자리로 들어감
+        const be = drag?.id === b.id ? drag.end : b.plan_end;
+        const bw = be ? (diffDays(bs, be) + 1) * ppd : ppd;
+        const tx = x2 + Math.max(1, Math.min(8, bw / 2));
+        const sx2 = Math.min(sx, (aStart + x1) / 2);
+        const enter = down ? yb - 8 : yb + 8;
+        const step = down ? enter - 8 : enter + 8;
+        path = tx - sx2 < 2 ? `M${tx},${edgeY} V${enter - (down ? 1 : -1)}` : `M${sx2},${edgeY} V${step} H${tx} V${enter - (down ? 1 : -1)}`;
       } else {
         // 겹치면(앞 단계가 끝나기 전에 시작): 돌아서 들어감 — 빨간 점선으로 경고
         const mid = down ? yb - ROW / 2 + 4 : yb + ROW / 2 - 4;
