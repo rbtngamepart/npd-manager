@@ -2,10 +2,9 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabase/client";
-import { addDays, diffDays } from "@/lib/dates";
 import type { Profile, Project, ProjectMember, Stage } from "@/lib/types";
 import { displayName } from "./AppProvider";
-import { useUnsaved } from "@/lib/unsaved";
+import { ProjectInfoForm } from "./ProjectInfoForm";
 
 export function ProjectSettings({
   project,
@@ -28,73 +27,11 @@ export function ProjectSettings({
   onDeleted: () => void;
   toast: (m: string) => void;
 }) {
-  const [name, setName] = useState(project.name);
-  const [category, setCategory] = useState(project.category ?? "");
-  const [description, setDescription] = useState(project.description ?? "");
-  const [start, setStart] = useState(project.start_date ?? "");
-  const [pmId, setPmId] = useState(project.pm_id ?? "");
-  const calReady = project.calendar_tags !== undefined; // 006 업데이트 후
-  const [tags, setTags] = useState((project.calendar_tags ?? []).join(", "));
-  const [shift, setShift] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [addId, setAddId] = useState("");
-
-  const settingsDirty =
-    name !== project.name ||
-    category !== (project.category ?? "") ||
-    description !== (project.description ?? "") ||
-    start !== (project.start_date ?? "") ||
-    pmId !== (project.pm_id ?? "") ||
-    (calReady && tags !== (project.calendar_tags ?? []).join(", "));
-  useUnsaved("project-settings", "프로젝트 정보", canEdit && settingsDirty, async () => {
-    await save();
-    return true;
-  });
 
   const approved = profiles.filter((p) => p.approved);
   const memberIds = new Set(members.map((m) => m.user_id));
   const candidates = approved.filter((p) => !p.is_game_part && !memberIds.has(p.id));
-  const startChanged = (project.start_date ?? "") !== start;
-  const delta = project.start_date && start ? diffDays(project.start_date, start) : 0;
-
-  async function save() {
-    setBusy(true);
-    const sb = supabase();
-    await sb
-      .from("projects")
-      .update({
-        name: name.trim() || project.name,
-        category: category.trim() || null,
-        description: description.trim() || null,
-        start_date: start || null,
-        pm_id: pmId || null,
-        ...(calReady
-          ? {
-              calendar_tags: Array.from(
-                new Set(
-                  tags
-                    .split(/[,\n]/)
-                    .map((t) => t.replace(/^[\[【［]|[\]】］]$/g, "").trim())
-                    .filter(Boolean)
-                )
-              ),
-            }
-          : {}),
-      })
-      .eq("id", project.id);
-    if (startChanged && shift && delta !== 0) {
-      for (const s of stages) {
-        const patch: Partial<Stage> = {};
-        if (s.plan_start) patch.plan_start = addDays(s.plan_start, delta);
-        if (s.plan_end) patch.plan_end = addDays(s.plan_end, delta);
-        if (s.expected_end && !s.actual_end) patch.expected_end = addDays(s.expected_end, delta);
-        if (Object.keys(patch).length) await sb.from("stages").update(patch).eq("id", s.id);
-      }
-    }
-    setBusy(false);
-    toast("저장했습니다");
-    onChanged();
-  }
 
   async function toggleArchive() {
     await supabase().from("projects").update({ archived: !project.archived }).eq("id", project.id);
@@ -120,64 +57,12 @@ export function ProjectSettings({
     onChanged();
   }
 
-  const ro = !canEdit;
 
   return (
     <div className="grid gap-6 p-5 lg:grid-cols-2">
       <section className="space-y-3" data-tour="ps-info">
         <h3 className="text-sm font-semibold">프로젝트 정보</h3>
-        <div>
-          <label className="label">프로젝트명</label>
-          <input className="input" disabled={ro} value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="label">유형</label>
-            <input className="input" disabled={ro} value={category} onChange={(e) => setCategory(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">담당 PM</label>
-            <select className="input" disabled={ro} value={pmId} onChange={(e) => setPmId(e.target.value)}>
-              <option value="">—</option>
-              {approved.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {displayName(p)}
-                  {p.department ? ` (${p.department})` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div>
-          <label className="label">프로젝트 시작일 (1주차)</label>
-          <input type="date" className="input" disabled={ro} value={start} onChange={(e) => setStart(e.target.value)} />
-          {startChanged && delta !== 0 && stages.length > 0 && (
-            <label className="mt-2 flex items-center gap-1.5 text-xs text-slate-600">
-              <input type="checkbox" checked={shift} onChange={(e) => setShift(e.target.checked)} />
-              모든 단계 계획도 {delta > 0 ? `${delta}일 뒤로` : `${-delta}일 앞으로`} 함께 이동
-            </label>
-          )}
-        </div>
-        {calReady && (
-          <div data-tour="ps-calendar">
-            <label className="label">📅 캘린더 말머리 (여러 개는 쉼표로)</label>
-            <input className="input" disabled={ro} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="예) OG26, 오리지널게임" />
-            <p className="mt-1 text-[11px] text-slate-400">
-              구글 캘린더 일정 제목이 <code>[{(tags.split(",")[0] || "말머리").trim()}] 단계명</code> 이면 이 프로젝트 단계로 들어옵니다. 프로젝트 이름과 같은 말머리는 따로 적지 않아도 연결돼요.
-            </p>
-          </div>
-        )}
-        <div>
-          <label className="label">설명</label>
-          <textarea className="input min-h-20" disabled={ro} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </div>
-        {canEdit && (
-          <div className="flex gap-2">
-            <button className="btn-primary" disabled={busy} onClick={save}>
-              {busy ? "저장 중…" : "저장"}
-            </button>
-          </div>
-        )}
+        <ProjectInfoForm key={project.updated_at} project={project} stages={stages} canEdit={canEdit} onSaved={(m) => (toast(m), onChanged())} />
       </section>
 
       <section className="space-y-6">

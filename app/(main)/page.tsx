@@ -7,6 +7,7 @@ import { useApp } from "@/components/AppProvider";
 import { tourSeen, markTourSeen, useTour } from "@/components/Tour";
 import { PortfolioGantt } from "@/components/PortfolioGantt";
 import { copyText, useContextMenu } from "@/components/ContextMenu";
+import { ProjectEditModal } from "@/components/ProjectInfoForm";
 import { useRouter } from "next/navigation";
 import { Empty, ProgressBar, StatusChip, StatusDot } from "@/components/ui";
 import { diffDays, full, short, today as todayFn } from "@/lib/dates";
@@ -20,6 +21,8 @@ export default function Dashboard() {
   const router = useRouter();
   const openCtx = useContextMenu();
   const [note, setNote] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Project | null>(null);
+  const canEditProject = (p: Project) => !!me && (me.is_game_part || members.some((m) => m.project_id === p.id && m.user_id === me.id));
   const flash = (m: string) => {
     setNote(m);
     setTimeout(() => setNote(null), 2200);
@@ -28,6 +31,8 @@ export default function Dashboard() {
     const url = `${window.location.origin}/projects/${p.id}`;
     openCtx(e, [
       { header: p.name },
+      { icon: "✏️", label: canEditProject(p) ? "프로젝트 편집" : "프로젝트 정보", hint: "시작일·설명", run: () => setEditing(p) },
+      "sep",
       { icon: "↗", label: "열기", run: () => router.push(`/projects/${p.id}`) },
       { icon: "⧉", label: "새 탭에서 열기", run: () => window.open(url, "_blank") },
       { icon: "🔗", label: "링크 복사", run: async () => (await copyText(url)) && flash("링크를 복사했습니다") },
@@ -366,6 +371,16 @@ export default function Dashboard() {
           )}
         </aside>
       </div>
+      <ProjectEditModal
+        project={editing}
+        stages={editing ? stages.filter((x) => x.project_id === editing.id) : []}
+        canEdit={!!editing && canEditProject(editing)}
+        onClose={() => setEditing(null)}
+        onSaved={(m) => {
+          flash(m);
+          load();
+        }}
+      />
       {note && <div className="fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-xl">{note}</div>}
     </div>
   );

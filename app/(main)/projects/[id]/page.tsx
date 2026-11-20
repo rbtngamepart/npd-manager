@@ -10,6 +10,7 @@ import { StagePanel } from "@/components/StagePanel";
 import { ProgressTable } from "@/components/ProgressTable";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ProjectSettings } from "@/components/ProjectSettings";
+import { ProjectEditModal } from "@/components/ProjectInfoForm";
 import { Empty, Modal, PmPicker, ProgressBar, StatusChip, Toast } from "@/components/ui";
 import { addDays, diffDays, full, relativeTime, short, today as todayFn, weekNumber } from "@/lib/dates";
 import { CLIP_EVENT, CLIP_MIME, buildClip, clearClip, loadClip, parseClip, saveClip, uniqueName, type StageClip } from "@/lib/stageClipboard";
@@ -98,6 +99,8 @@ function ProjectPage() {
     setSelected(sid);
   };
   const [importOpen, setImportOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [tplName, setTplName] = useState("");
   const [memo, setMemo] = useState("");
@@ -734,13 +737,46 @@ function ProjectPage() {
             {project.category && <span>{project.category}</span>}
             {project.archived && <span className="rounded bg-slate-200 px-1.5 text-slate-600">보관됨</span>}
           </div>
-          <h1 className="mt-1 truncate text-xl font-semibold tracking-tight">{project.name}</h1>
+          <div className="group/title mt-1 flex min-w-0 items-center gap-1.5">
+            <h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1>
+            <Tip content={canEdit ? "프로젝트 편집 · 이름·시작일·설명·PM·캘린더 말머리" : "프로젝트 정보 보기"}>
+              <button
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-400 hover:bg-black/[0.05] hover:text-ink"
+                onClick={() => setEditOpen(true)}
+                aria-label="프로젝트 편집"
+                data-tour="proj-edit"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M13.5 3.5l3 3L7 16l-3.5.5L4 13l9.5-9.5z" />
+                  <path d="M12 5l3 3" />
+                </svg>
+              </button>
+            </Tip>
+          </div>
           <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-slate-500">
             {pm && <span>PM {displayName(pm)}</span>}
-            <span>시작 {full(project.start_date)}</span>
+            <button className={`hover:text-ink ${canEdit ? "underline decoration-dotted underline-offset-2" : ""}`} onClick={() => setEditOpen(true)} title={canEdit ? "눌러서 시작일 바꾸기" : undefined}>
+              시작 {full(project.start_date)}
+            </button>
             {project.start_date && <span>현재 {weekNumber(project.start_date, today)}주차</span>}
             {!canEdit && <span className="text-amber-700">보기 전용</span>}
           </div>
+          {project.description ? (
+            <div className="mt-1.5 max-w-3xl text-[13px] leading-relaxed text-slate-600">
+              <p className={`whitespace-pre-line ${descOpen ? "" : "line-clamp-2"}`}>{project.description}</p>
+              {(project.description.length > 120 || project.description.split("\n").length > 2) && (
+                <button className="text-xs text-slate-400 hover:text-ink" onClick={() => setDescOpen((v) => !v)}>
+                  {descOpen ? "접기" : "더보기"}
+                </button>
+              )}
+            </div>
+          ) : (
+            canEdit && (
+              <button className="mt-1 text-xs text-slate-400 hover:text-brand-600" onClick={() => setEditOpen(true)}>
+                + 프로젝트 설명 추가
+              </button>
+            )
+          )}
         </div>
         <div className="flex items-center gap-2" data-tour="proj-pm">
           <span className="text-xs text-slate-500">PM 판단</span>
@@ -1309,6 +1345,17 @@ function ProjectPage() {
           onClose={() => selectStage(null)}
         />
       )}
+
+      <ProjectEditModal
+        project={editOpen ? project : null}
+        stages={stages}
+        canEdit={canEdit}
+        onClose={() => setEditOpen(false)}
+        onSaved={(m) => {
+          toast(m);
+          load();
+        }}
+      />
 
       <Modal open={!!shift} onClose={() => setShift(null)} title="연결된 뒤 단계도 함께 미룰까요?" width="max-w-2xl">
         {shift && (
