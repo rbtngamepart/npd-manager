@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CommandPalette } from "@/components/CommandPalette";
 import { usePathname, useRouter } from "next/navigation";
 import { AppProvider, displayName, useApp } from "@/components/AppProvider";
 import { supabase } from "@/lib/supabase/client";
@@ -94,6 +95,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen">
+      <CommandPalette pages={nav} />
       <header className="sticky top-0 z-30 border-b border-black/[0.06] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2">
@@ -117,6 +119,15 @@ function Shell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           <div className="ml-auto flex items-center gap-2 text-sm">
+            <button
+              className="hidden items-center gap-2 rounded-md border border-black/10 px-2.5 py-1 text-xs text-slate-400 hover:bg-black/[0.03] hover:text-ink md:flex"
+              onClick={() => window.dispatchEvent(new Event("npd-open-palette"))}
+              data-tour="palette"
+              title="메모·프로젝트·단계 찾아가기"
+            >
+              🔍 찾기
+              <kbd className="rounded bg-slate-100 px-1 text-[10px]">Ctrl K</kbd>
+            </button>
             <button
               data-tour="help-btn"
               onClick={openMenu}

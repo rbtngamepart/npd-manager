@@ -1,13 +1,25 @@
 "use client";
 
 // 서식 있는 메모: 굵게·기울임·밑줄·취소선, 글자 크기·색, 글머리 기호·번호, 체크박스, 링크
+//   + 제목·토글·콜아웃·표·이미지·파일·임베드·@사람·[[링크]] (모든 편집기가 같은 형식을 읽음)
+//   blocks: 큰 편집기에서만 노션식 도구(⋮⋮ 손잡이, / 명령어, 고르면 뜨는 툴바, 파일 붙여넣기)
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Color, FontSize, TextStyle } from "@tiptap/extension-text-style";
 import { Placeholder } from "@tiptap/extension-placeholder";
+import Highlight from "@tiptap/extension-highlight";
+import TextAlign from "@tiptap/extension-text-align";
+import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
+import { TableKit } from "@tiptap/extension-table";
+import FileHandler from "@tiptap/extension-file-handler";
 import DOMPurify from "dompurify";
+import { useApp, displayName } from "./AppProvider";
+import { Callout, Embed, FileBlock, FileImage, PersonMention, RefLink } from "./editor/nodes";
+import { NpdBlocks, SlashCommand, disabledSuggestion, personSuggestion, refSuggestion, type NpdBlocksStorage, type PersonLite } from "./editor/suggest";
+import { BlockHandle, SelectionBubble } from "./editor/BlockUI";
+import { embedFor, hydrateRich, openFile, uploadFile } from "./editor/files";
 
 const SIZES = [
   { v: "", label: "보통" },
@@ -32,7 +44,7 @@ const COLORS = [
 /** 비어 있는 편집기 결과 */
 export function isEmptyHtml(html: string | null | undefined): boolean {
   if (!html) return true;
-  if (/<input[^>]+type="checkbox"/i.test(html) || /<img/i.test(html)) return false;
+  if (/<input[^>]+type="checkbox"/i.test(html) || /<img|<hr|<table|data-type="(embed|file|mention|ref)"/i.test(html)) return false;
   return html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim() === "";
 }
 
@@ -55,8 +67,14 @@ export function htmlToText(html: string): string {
             .filter((c) => ["UL", "OL"].includes(c.tagName))
             .forEach((sub) => walk({ children: [sub] } as unknown as Element, prefix + "  "));
         });
-      } else if (tag === "p" || /^h[1-6]$/.test(tag) || tag === "blockquote" || tag === "pre") {
+      } else if (tag === "p" || /^h[1-6]$/.test(tag) || tag === "pre" || tag === "summary") {
         out.push(prefix + (node.textContent ?? ""));
+      } else if (tag === "tr") {
+        out.push(prefix + Array.from(node.children).map((c) => (c.textContent ?? "").trim()).join(" | "));
+      } else if (tag === "hr") {
+        out.push(prefix + "———");
+      } else if (node.children.length === 0 && (node.textContent ?? "").trim()) {
+        out.push(prefix + (node.textContent ?? "").trim());
       } else {
         walk(node, prefix);
       }
@@ -80,7 +98,7 @@ export function sanitize(html: string): string {
   // 서버에서 그릴 때는 비워 두고 브라우저에서 채움
   if (typeof window === "undefined" || typeof DOMPurify.sanitize !== "function") return "";
   return DOMPurify.sanitize(html, {
-    ADD_ATTR: ["target", "data-type", "data-checked"],
+    ADD_ATTR: ["target", "data-type", "data-checked", "open"],
     FORBID_TAGS: ["style", "script", "iframe", "form", "button", "textarea", "select"],
   });
 }
@@ -100,7 +118,8 @@ function Btn({ on, title, onClick, children, disabled }: { on?: boolean; title: 
   );
 }
 
-function Toolbar({ editor }: { editor: Editor }) {
+function Toolbar({ editor, blocks, uploading, onPick }: { editor: Editor; blocks?: boolean; uploading?: number; onPick?: () => void }) {
+  const [help, setHelp] = useState(false);
   const s = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -112,6 +131,7 @@ function Toolbar({ editor }: { editor: Editor }) {
       ordered: e.isActive("orderedList"),
       task: e.isActive("taskList"),
       link: e.isActive("link"),
+      align: (["center", "right"] as const).find((a) => e.isActive({ textAlign: a })) ?? "left",
       size: (e.getAttributes("textStyle").fontSize as string) ?? "",
       color: (e.getAttributes("textStyle").color as string) ?? "",
     }),
@@ -198,6 +218,98 @@ function Toolbar({ editor }: { editor: Editor }) {
       <Btn title="서식 지우기" onClick={() => c().unsetAllMarks().clearNodes().run()}>
         ⌫
       </Btn>
+      {blocks && (
+        <>
+          <span className="mx-1 h-4 w-px bg-black/10" />
+          <Btn title="정렬 (왼쪽 → 가운데 → 오른쪽)" onClick={() => c().setTextAlign(s.align === "left" ? "center" : s.align === "center" ? "right" : "left").run()}>
+            {s.align === "center" ? "≡" : s.align === "right" ? "⫸" : "⫷"}
+          </Btn>
+          <Btn title="표 넣기" onClick={() => c().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}>
+            ▦
+          </Btn>
+          <Btn title="이미지·파일 넣기 (붙여넣기·끌어놓기도 돼요)" onClick={() => onPick?.()}>
+            🖼️
+          </Btn>
+          {editor.isActive("table") && <TableTools editor={editor} />}
+          {!!uploading && <span className="ml-1 animate-pulse text-[11px] text-brand-600">올리는 중… {uploading}</span>}
+          <div className="relative ml-auto">
+            <Btn title="단축키·사용법" on={help} onClick={() => setHelp((v) => !v)}>
+              ?
+            </Btn>
+            {help && <ShortcutHelp onClose={() => setHelp(false)} />}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TableTools({ editor }: { editor: Editor }) {
+  const c = () => editor.chain().focus();
+  return (
+    <span className="ml-1 flex items-center gap-0.5 rounded bg-slate-100 px-1 text-[11px] text-slate-600">
+      표:
+      <Btn title="아래에 줄 추가" onClick={() => c().addRowAfter().run()}>
+        +줄
+      </Btn>
+      <Btn title="오른쪽에 칸 추가" onClick={() => c().addColumnAfter().run()}>
+        +칸
+      </Btn>
+      <Btn title="이 줄 지우기" onClick={() => c().deleteRow().run()}>
+        −줄
+      </Btn>
+      <Btn title="이 칸 지우기" onClick={() => c().deleteColumn().run()}>
+        −칸
+      </Btn>
+      <Btn title="첫 줄을 머리글로 켜기/끄기" onClick={() => c().toggleHeaderRow().run()}>
+        머리글
+      </Btn>
+      <Btn title="표 지우기" onClick={() => c().deleteTable().run()}>
+        🗑
+      </Btn>
+    </span>
+  );
+}
+
+const SHORTCUTS: [string, string][] = [
+  ["/", "블록 메뉴 (제목·토글·표·이미지…)"],
+  ["# · ## · ###", "제목 1 · 2 · 3"],
+  ["- 또는 *", "글머리 목록"],
+  ["1.", "번호 목록"],
+  ["[] ", "체크리스트"],
+  ["> ", "인용"],
+  ["---", "구분선"],
+  ["```", "코드"],
+  ["**글자**", "굵게"],
+  ["@", "사람 언급"],
+  ["[[", "메모·단계 링크"],
+  ["Ctrl+1~4", "글자 크기"],
+  ["Tab / Shift+Tab", "목록 들여쓰기 / 내어쓰기"],
+  ["⋮⋮ 끌기", "블록 옮기기 (누르면 메뉴)"],
+  ["주소 붙여넣기", "빈 줄에 유튜브·구글 드라이브 → 바로 보기"],
+];
+function ShortcutHelp({ onClose }: { onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const off = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    document.addEventListener("mousedown", off);
+    return () => document.removeEventListener("mousedown", off);
+  }, [onClose]);
+  return (
+    <div ref={ref} className="absolute right-0 top-full z-40 mt-1 w-72 rounded-lg border border-black/10 bg-white p-2 text-xs shadow-lg">
+      <p className="px-1 pb-1.5 font-semibold text-slate-700">입력하면 바로 바뀌어요</p>
+      <table className="w-full">
+        <tbody>
+          {SHORTCUTS.map(([k, v]) => (
+            <tr key={k}>
+              <td className="whitespace-nowrap py-0.5 pr-2 align-top">
+                <code className="rounded bg-slate-100 px-1 text-[11px]">{k}</code>
+              </td>
+              <td className="py-0.5 text-slate-600">{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -213,6 +325,7 @@ export function RichEditor({
   resetKey,
   large,
   fill,
+  blocks,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -228,7 +341,17 @@ export function RichEditor({
   large?: boolean;
   /** 부모 높이를 채우고, 글이 길어지면 본문만 스크롤 (도구 줄은 위에 고정) */
   fill?: boolean;
+  /** 노션식 도구 켜기 (메모·큰 창) */
+  blocks?: boolean;
 }) {
+  const { profiles } = useApp();
+  const peopleRef = useRef<PersonLite[]>([]);
+  peopleRef.current = useMemo(
+    () => (profiles ?? []).filter((p) => p.approved).map((p) => ({ id: p.id, label: displayName(p), hint: p.department ?? "" })),
+    [profiles]
+  );
+  const [uploading, setUploading] = useState(0);
+  const fileInput = useRef<HTMLInputElement>(null);
   const submitRef = useRef(onSubmit);
   submitRef.current = onSubmit;
   const changeRef = useRef(onChange);
@@ -245,10 +368,7 @@ export function RichEditor({
     autofocus: autoFocus ? "end" : false,
     extensions: [
       StarterKit.configure({
-        heading: false,
-        codeBlock: false,
-        code: false,
-        horizontalRule: false,
+        heading: { levels: [1, 2, 3] },
         link: { openOnClick: false, autolink: true, defaultProtocol: "https", HTMLAttributes: { target: "_blank", rel: "noopener noreferrer" } },
       }),
       TaskList,
@@ -256,11 +376,56 @@ export function RichEditor({
       TextStyle,
       FontSize,
       Color,
-      Placeholder.configure({ placeholder: placeholder ?? "" }),
+      Highlight.configure({ multicolor: true }),
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      Details.configure({ persist: true, HTMLAttributes: { class: "npd-details" } }),
+      DetailsSummary,
+      DetailsContent,
+      TableKit.configure({ table: { resizable: false } }),
+      Callout,
+      FileImage,
+      FileBlock,
+      Embed,
+      PersonMention.configure({ suggestion: blocks ? personSuggestion(() => peopleRef.current) : disabledSuggestion("@", "mention-off") }),
+      RefLink.configure({ suggestion: blocks ? refSuggestion() : disabledSuggestion("[[", "ref-off") }),
+      Placeholder.configure({
+        includeChildren: false,
+        placeholder: ({ node, editor: ed }) => {
+          if (node.type.name === "heading") return `제목 ${node.attrs.level}`;
+          if (node.type.name === "detailsSummary") return "토글 제목";
+          if (ed.isEmpty) return placeholder ?? "";
+          return blocks ? "' / ' 를 입력해 블록 추가" : "";
+        },
+      }),
+      ...(blocks
+        ? [
+            NpdBlocks,
+            SlashCommand,
+            FileHandler.configure({
+              onPaste: (ed, files) => void insertFiles(ed, files),
+              onDrop: (ed, files, pos) => void insertFiles(ed, files, pos),
+            }),
+          ]
+        : []),
     ],
     content: value || "",
     editorProps: {
-      attributes: { class: `rich min-w-0 outline-none ${large ? "px-4 py-3 text-[15px] leading-relaxed" : "px-3 py-2 text-sm"}`, style: `min-height:${minHeight}px` },
+      attributes: {
+        class: `rich min-w-0 outline-none ${large ? "py-3 text-[15px] leading-relaxed" : "py-2 text-sm"} ${blocks ? "rich-blocks pl-12 pr-5" : large ? "px-4" : "px-3"}`,
+        style: `min-height:${minHeight}px`,
+      },
+      // 빈 줄에 유튜브·구글 드라이브 주소만 붙여넣으면 바로 보이게
+      handlePaste: (view, e) => {
+        if (!blocks) return false;
+        const text = e.clipboardData?.getData("text/plain")?.trim() ?? "";
+        if (!text || /\s/.test(text) || !/^https?:\/\//.test(text)) return false;
+        const info = embedFor(text);
+        const { $from, empty } = view.state.selection;
+        if (!info?.iframe || !empty || $from.parent.type.name !== "paragraph" || $from.parent.content.size > 0) return false;
+        touch();
+        editorRef.current?.chain().focus().setEmbed(text).run();
+        return true;
+      },
       handleKeyDown: (_v, e) => {
         // 글자 크기 단축키: Ctrl+1 보통 · Ctrl+2 작게 · Ctrl+3 크게 · Ctrl+4 아주 크게 (Ctrl+Alt+숫자도 같음)
         const m = /^Digit([1-4])$/.exec(e.code);
@@ -291,10 +456,38 @@ export function RichEditor({
   const editorRef = useRef<Editor | null>(null);
   editorRef.current = editor;
 
+  async function insertFiles(ed: Editor, files: File[], pos?: number) {
+    touch();
+    setUploading((n) => n + files.length);
+    for (const f of files) {
+      try {
+        const up = await uploadFile(f);
+        const node = /^image\//.test(f.type) ? { type: "image", attrs: { path: up.path, alt: f.name } } : { type: "fileBlock", attrs: up };
+        if (pos !== undefined) ed.chain().focus().insertContentAt(pos, node).run();
+        else ed.chain().focus().insertContent(node).run();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!editor || !blocks) return;
+    const st = (editor.storage as unknown as { npdBlocks?: NpdBlocksStorage }).npdBlocks;
+    if (st) st.pickFile = () => fileInput.current?.click();
+  }, [editor, blocks]);
+
   useEffect(() => {
     if (!editor) return;
     touched.current = false;
-    if ((editor.isEmpty ? "" : editor.getHTML()) !== (value || "")) editor.commands.setContent(value || "", { emitUpdate: false });
+    // 그림·임베드 같은 블록이 React로 그려지므로, 렌더링이 끝난 뒤에 채움
+    const v = value || "";
+    queueMicrotask(() => {
+      if (editor.isDestroyed) return;
+      if ((editor.isEmpty ? "" : editor.getHTML()) !== v) editor.commands.setContent(v, { emitUpdate: false });
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, resetKey]);
 
@@ -315,10 +508,27 @@ export function RichEditor({
       onCompositionStartCapture={touch}
       onChangeCapture={touch}
     >
-      {editor && <Toolbar editor={editor} />}
+      {editor && <Toolbar editor={editor} blocks={blocks} uploading={uploading} onPick={() => fileInput.current?.click()} />}
+      {blocks && editor && (
+        <>
+          <BlockHandle editor={editor} />
+          <SelectionBubble editor={editor} />
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              if (files.length) void insertFiles(editor, files);
+            }}
+          />
+        </>
+      )}
       {fill ? (
         <div
-          className="scroll-thin min-h-0 flex-1 cursor-text overflow-y-auto"
+          className="scroll-thin relative min-h-0 flex-1 cursor-text overflow-y-auto"
           onMouseDown={(e) => {
             // 글 아래 빈 곳을 눌러도 이어서 쓰기
             if (e.target !== e.currentTarget || !editor) return;
@@ -329,7 +539,9 @@ export function RichEditor({
           <EditorContent editor={editor} />
         </div>
       ) : (
-        <EditorContent editor={editor} />
+        <div className="relative">
+          <EditorContent editor={editor} />
+        </div>
       )}
     </div>
   );
@@ -342,6 +554,11 @@ export function RichView({ html, onChange, className = "" }: { html: string | nu
   const clean = useMemo(() => (mounted ? sanitize(html ?? "") : ""), [html, mounted]);
   const ref = useRef<HTMLDivElement>(null);
 
+  // 이미지·임베드 보이게
+  useEffect(() => {
+    if (ref.current) hydrateRich(ref.current);
+  }, [clean]);
+
   // 화면용: 체크박스 상태를 data-checked에 맞추고, 바꿀 수 없으면 잠금
   useEffect(() => {
     ref.current?.querySelectorAll<HTMLInputElement>('li[data-type="taskItem"] input[type="checkbox"]').forEach((cb) => {
@@ -353,6 +570,13 @@ export function RichView({ html, onChange, className = "" }: { html: string | nu
 
   function onClick(e: React.MouseEvent) {
     const t = e.target as HTMLElement;
+    const file = t.closest?.('div[data-type="file"]');
+    if (file) {
+      e.preventDefault();
+      const path = file.getAttribute("data-path");
+      if (path) openFile(path);
+      return;
+    }
     if (!onChange || !(t instanceof HTMLInputElement) || t.type !== "checkbox") return;
     const all = Array.from(ref.current?.querySelectorAll('li[data-type="taskItem"]') ?? []);
     const idx = all.indexOf(t.closest("li") as Element);

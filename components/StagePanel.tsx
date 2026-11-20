@@ -17,6 +17,7 @@ import { StageNotes } from "./StageNotes";
 import { StageChecklist, StageDeps, StageExternal, StageLinks } from "./StageExtras";
 import { effectiveGroup, groupOptions, groupPath, stagePath } from "@/lib/groups";
 import { askSave, useUnsaved } from "@/lib/unsaved";
+import { extractRefs, newMentions, notifyMentions } from "@/lib/noteRefs";
 import { Help, Tip } from "./Tip";
 import Link from "next/link";
 
@@ -308,6 +309,7 @@ export function StagePanel({
     const text = v8 ? htmlToText(note) : note.trim();
     if (v8 ? isEmptyHtml(note) : !note.trim()) return;
     await onAddLog(kind, text, v8 ? html : null);
+    if (v8) void notifyMentions({ kind: "log", stageId: stage.id, mentioned: extractRefs(html).mentions, text });
     setNote("");
     setNoteKey((k) => k + 1);
     setKind("memo");
@@ -339,6 +341,7 @@ export function StagePanel({
     if (choice === "save" && changed) {
       if (isEmptyHtml(editLog.html)) return false;
       await onUpdateLog(editLog.id, htmlToText(editLog.html), editLog.html);
+      void notifyMentions({ kind: "log", stageId: stage.id, mentioned: newMentions(extractRefs(l?.body_html).mentions, extractRefs(editLog.html).mentions), text: htmlToText(editLog.html) });
     }
     setEditLog(null);
     return true;
@@ -1158,6 +1161,7 @@ export function StagePanel({
                       autoFocus
                       large
                       fill
+                      blocks
                       minHeight={320}
                       placeholder="이 단계에서 하는 일"
                     />
@@ -1193,6 +1197,7 @@ export function StagePanel({
                           autoFocus
                           large
                           fill
+                          blocks
                           minHeight={320}
                         />
                       </div>
@@ -1233,6 +1238,7 @@ export function StagePanel({
                       autoFocus
                       large
                       fill
+                      blocks
                       minHeight={320}
                       placeholder="협의 내용, 진행 메모를 남겨주세요 (Ctrl+Enter 등록)"
                     />

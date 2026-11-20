@@ -240,6 +240,14 @@ export interface Note {
   visibility: "shared" | "private";
   /** 업데이트 015 */
   folder_id?: string | null;
+  /** 업데이트 016 */
+  icon?: string | null;
+  cover?: string | null;
+  deleted_at?: string | null;
+  is_template?: boolean;
+  mention_ids?: string[];
+  ref_note_ids?: string[];
+  ref_stage_ids?: string[];
   author_id: string | null;
   updated_by: string | null;
   created_at: string;
@@ -255,4 +263,15 @@ export interface NoteFolder {
   owner_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface NoteVersion {
+  id: string;
+  note_id: string;
+  title: string | null;
+  kind: string | null;
+  body_html: string | null;
+  mindmap: unknown | null;
+  created_at: string;
+  created_by: string | null;
 }

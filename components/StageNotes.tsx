@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import type { Note } from "@/lib/types";
 
-type Row = Pick<Note, "id" | "title" | "kind" | "category" | "note_date" | "visibility">;
+type Row = Pick<Note, "id" | "title" | "kind" | "category" | "note_date" | "visibility" | "icon" | "stage_ids">;
 const CAT: Record<string, string> = { meeting: "회의", idea: "아이디어", memo: "메모" };
 
 export function StageNotes({ projectId, stageId, canEdit }: { projectId: string; stageId: string; canEdit: boolean }) {
@@ -15,6 +15,16 @@ export function StageNotes({ projectId, stageId, canEdit }: { projectId: string;
   useEffect(() => {
     let dead = false;
     const load = async () => {
+      // 016 뒤: 연결한 메모 + 본문에 [[이 단계]]를 적은 메모, 휴지통·템플릿 제외
+      const plus = await supabase()
+        .from("notes")
+        .select("id,title,kind,category,note_date,visibility,icon,deleted_at,is_template,stage_ids")
+        .or(`stage_ids.cs.{${stageId}},ref_stage_ids.cs.{${stageId}}`)
+        .order("note_date", { ascending: false });
+      if (!plus.error) {
+        if (!dead) setRows(((plus.data ?? []) as (Row & { deleted_at: string | null; is_template: boolean })[]).filter((n) => !n.deleted_at && !n.is_template));
+        return;
+      }
       const { data, error } = await supabase()
         .from("notes")
         .select("id,title,kind,category,note_date,visibility")
@@ -53,9 +63,14 @@ export function StageNotes({ projectId, stageId, canEdit }: { projectId: string;
           {rows.map((n) => (
             <li key={n.id}>
               <Link href={`/notes?id=${n.id}`} className="flex items-center gap-1.5 rounded px-1.5 py-1 text-sm hover:bg-slate-50">
-                <span className="text-xs">{n.kind === "mindmap" ? "🧠" : "📄"}</span>
+                <span className="text-xs">{n.icon || (n.kind === "mindmap" ? "🧠" : "📄")}</span>
                 <span className={`min-w-0 flex-1 truncate ${n.title ? "" : "text-slate-400"}`}>{n.title || "제목 없음"}</span>
                 {n.visibility === "private" && <span className="text-[10px]">🔒</span>}
+                {n.stage_ids && !n.stage_ids.includes(stageId) && (
+                  <span className="shrink-0 rounded bg-slate-100 px-1 text-[10px] text-slate-500" title="본문에서 [[이 단계]]를 가리킨 메모">
+                    언급
+                  </span>
+                )}
                 <span className="shrink-0 text-[11px] text-slate-400">
                   {CAT[n.category]} · {n.note_date.slice(5).replace("-", "/")}
                 </span>

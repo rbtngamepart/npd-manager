@@ -173,7 +173,7 @@ export function NoteTree(p: NoteTreeProps) {
         style={{ paddingLeft: pad(depth) + 18 }}
         title={view.title || "제목 없음"}
       >
-        <span className="text-xs">{KIND_ICON[view.kind]}</span>
+        <span className="text-xs">{view.icon || KIND_ICON[view.kind]}</span>
         <span className={`min-w-0 flex-1 truncate ${view.title ? "" : "text-slate-400"} ${active ? "font-medium" : ""}`}>{view.title || "제목 없음"}</span>
         {view.visibility === "private" && <span className="text-[10px]">🔒</span>}
         <span className="shrink-0 text-[10px] tabular-nums text-slate-400">{view.note_date.slice(5).replace("-", "/")}</span>

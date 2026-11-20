@@ -14,6 +14,10 @@ import { useUnsaved } from "@/lib/unsaved";
 import { relativeTime, today as todayFn } from "@/lib/dates";
 import type { Note, NoteCategory, NoteFolder, NoteKind, Project, Stage } from "@/lib/types";
 import { NoteTree } from "@/components/NoteTree";
+import { Backlinks, COVERS, CoverPicker, IconPicker, NewNoteMenu, Toc, VersionsModal, type NewChoice } from "@/components/NoteExtras";
+import { extractRefs, newMentions, notifyMentions } from "@/lib/noteRefs";
+import { exportMarkdown, exportMarkdownText, exportPrint, exportWord } from "@/lib/exportNote";
+import type { NoteVersion } from "@/lib/types";
 
 const MindMap = dynamic(() => import("@/components/MindMap").then((m) => m.MindMap), {
   ssr: false,
@@ -27,6 +31,8 @@ const CAT: Record<NoteCategory, { label: string; cls: string; icon: string }> = 
 };
 const KIND_ICON: Record<NoteKind, string> = { doc: "📄", mindmap: "🧠" };
 const LIST_COLS = "id,title,kind,category,note_date,body_text,project_id,stage_ids,visibility,author_id,updated_by,created_at,updated_at";
+const PLUS_COLS = ",icon,cover,deleted_at,is_template,mention_ids,ref_note_ids,ref_stage_ids";
+const RECENT_KEY = "npd-notes-recent";
 
 const MEETING_TEMPLATE =
   "<p><strong>참석자</strong></p><p></p><p><strong>안건</strong></p><ol><li><p></p></li></ol><p><strong>논의 내용</strong></p><ul><li><p></p></li></ul><p><strong>결정 사항</strong></p><ul><li><p></p></li></ul><p><strong>할 일</strong></p><ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"false\"><label><input type=\"checkbox\"><span></span></label><div><p></p></div></li></ul>";
@@ -59,7 +65,7 @@ function Notes() {
   // 목록 필터
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<NoteCategory | "all">("all");
-  const [scope, setScope] = useState<"all" | "mine" | "private">("all");
+  const [scope, setScope] = useState<"all" | "mine" | "private" | "mentioned">("all");
   const [proj, setProj] = useState<string>("all");
   const [hideList, setHideList] = useState(false);
 
@@ -86,6 +92,44 @@ function Notes() {
     }
   };
 
+  // 노션식 기능 (업데이트 016)
+  const [plus, setPlus] = useState(true);
+  const plusRef = useRef(true);
+  plusRef.current = plus;
+  const [trashView, setTrashView] = useState(false);
+  const [favs, setFavs] = useState<Set<string>>(new Set());
+  const [recents, setRecents] = useState<string[]>([]);
+  const [newMenu, setNewMenu] = useState(false);
+  const [pop, setPop] = useState<"icon" | "cover" | null>(null);
+  const [showVersions, setShowVersions] = useState(false);
+  const [toc, setTocState] = useState(true);
+  const [toast, setToast] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = (text: string, action?: { label: string; run: () => void }) => {
+    setToast({ text, action });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
+  };
+  const savedMentions = useRef<string[]>([]);
+  useEffect(() => {
+    try {
+      const r = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+      if (Array.isArray(r)) setRecents(r.filter((x) => typeof x === "string").slice(0, 10));
+      if (localStorage.getItem("npd-notes-toc") === "off") setTocState(false);
+    } catch {
+      /* 무시 */
+    }
+  }, []);
+  const setToc = (v: boolean) => {
+    setTocState(v);
+    try {
+      localStorage.setItem("npd-notes-toc", v ? "on" : "off");
+    } catch {
+      /* 무시 */
+    }
+  };
+  const listCols = () => (noFoldersRef.current ? LIST_COLS : LIST_COLS + ",folder_id" + (plusRef.current ? PLUS_COLS : ""));
+
   // 열린 메모
   const [draft, setDraft] = useState<Note | null>(null);
   const [rk, setRk] = useState(0); // 편집기 다시 채우기
@@ -104,8 +148,14 @@ function Notes() {
   // ---- 불러오기 ----------------------------------------------------------
   const loadList = useCallback(async () => {
     const q = (cols: string) => supabase().from("notes").select(cols).order("note_date", { ascending: false }).order("updated_at", { ascending: false });
-    let { data, error } = await q(noFoldersRef.current ? LIST_COLS : LIST_COLS + ",folder_id");
-    if (error && /folder_id/.test(error.message)) {
+    let { data, error } = await q(listCols());
+    if (error && plusRef.current && /icon|cover|deleted_at|is_template|mention_ids|ref_|column/i.test(error.message)) {
+      plusRef.current = false;
+      setPlus(false); // 016 전: 노션식 기능 없이
+      ({ data, error } = await q(listCols()));
+    }
+    if (error && !noFoldersRef.current && /folder_id|column/i.test(error.message)) {
+      noFoldersRef.current = true;
       setNoFolders(true); // 015 전: 폴더 없이
       ({ data, error } = await q(LIST_COLS));
     }
@@ -121,9 +171,15 @@ function Notes() {
     else setFolders((data ?? []) as NoteFolder[]);
   }, []);
 
+  const loadFavs = useCallback(async () => {
+    const { data, error } = await supabase().from("note_favorites").select("note_id");
+    if (!error) setFavs(new Set(((data ?? []) as { note_id: string }[]).map((x) => x.note_id)));
+  }, []);
+
   useEffect(() => {
     loadList();
     loadFolders();
+    loadFavs();
     (async () => {
       const sb = supabase();
       const [p, s] = await Promise.all([
@@ -133,13 +189,26 @@ function Notes() {
       setProjects((p.data ?? []) as ProjectLite[]);
       setStages((s.data ?? []) as StageLite[]);
     })();
-  }, [loadList, loadFolders]);
+  }, [loadList, loadFolders, loadFavs]);
 
   const openNote = useCallback(async (id: string) => {
     const { data } = await supabase().from("notes").select("*").eq("id", id).maybeSingle();
     const n = (data as Note | null) ?? null;
     setDraft(n);
-    if (n) setCurFolder(n.folder_id ?? null);
+    savedMentions.current = n?.mention_ids ?? [];
+    if (n) {
+      setCurFolder(n.folder_id ?? null);
+      if (!n.is_template && !n.deleted_at)
+        setRecents((r) => {
+          const next = [n.id, ...r.filter((x) => x !== n.id)].slice(0, 10);
+          try {
+            localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+          } catch {
+            /* 무시 */
+          }
+          return next;
+        });
+    }
     base.current = n?.updated_at ?? null;
     setDirty(false);
     setConflict(null);
@@ -171,10 +240,16 @@ function Notes() {
         stage_ids: d.stage_ids,
         visibility: d.visibility,
         ...(noFoldersRef.current ? {} : { folder_id: d.folder_id ?? null }),
+        ...(plusRef.current && !noFoldersRef.current
+          ? (() => {
+              const r = d.kind === "doc" ? extractRefs(d.body_html) : { mentions: [], notes: [], stages: [] };
+              return { icon: d.icon ?? null, cover: d.cover ?? null, mention_ids: r.mentions, ref_note_ids: r.notes.filter((x) => x !== d.id), ref_stage_ids: r.stages };
+            })()
+          : {}),
       };
       let qy = supabase().from("notes").update(patch).eq("id", d.id);
       if (!force && base.current) qy = qy.eq("updated_at", base.current);
-      const { data, error } = await qy.select(noFoldersRef.current ? LIST_COLS : LIST_COLS + ",folder_id").maybeSingle();
+      const { data, error } = await qy.select(listCols()).maybeSingle();
       if (error) {
         setSaveState("error");
         return false;
@@ -188,6 +263,12 @@ function Notes() {
       }
       const row = data as unknown as Note;
       base.current = row.updated_at;
+      // 새로 언급한 사람에게 알림 (팀 공개 메모만, 서버에서 다시 확인)
+      if (row.mention_ids) {
+        const fresh = newMentions(savedMentions.current, row.mention_ids);
+        savedMentions.current = row.mention_ids;
+        if (fresh.length) void notifyMentions({ kind: "note", id: row.id, mentioned: fresh });
+      }
       if (draftRef.current === d) setDirty(false);
       setSaveState("saved");
       setNotes((ns) => ns.map((n) => (n.id === row.id ? { ...n, ...row } : n)));
@@ -251,17 +332,32 @@ function Notes() {
   // ---- 새 메모 ----------------------------------------------------------
   const creating = useRef(false);
   const create = useCallback(
-    async (kind: NoteKind, link?: { project?: string | null; stage?: string | null }, folder: string | null = curFolder) => {
+    async (
+      kind: NoteKind,
+      link?: { project?: string | null; stage?: string | null },
+      folder: string | null = curFolder,
+      opts: { preset?: "meeting"; template?: Note } = {}
+    ) => {
       if (creating.current) return;
       creating.current = true;
       if (timer.current) clearTimeout(timer.current);
       if (dirtyRef.current) await save();
       const stageRow = link?.stage ? stages.find((s) => s.id === link.stage) : undefined;
+      // 템플릿이면 내용을 가져와서 복사
+      let from: Partial<Note> = {};
+      if (opts.template) {
+        const { data: t } = await supabase().from("notes").select("*").eq("id", opts.template.id).maybeSingle();
+        const tn = t as Note | null;
+        if (tn) from = { kind: tn.kind, title: tn.title, category: tn.category, body_html: tn.body_html, body_text: tn.body_text, mindmap: tn.mindmap, icon: tn.icon, cover: tn.cover };
+      } else if (opts.preset === "meeting") {
+        from = { category: "meeting", body_html: MEETING_TEMPLATE, body_text: htmlToText(MEETING_TEMPLATE), icon: plusRef.current ? "👥" : undefined };
+      }
       const { data, error } = await supabase()
         .from("notes")
         .insert({
           kind,
           category: cat === "all" ? (kind === "mindmap" ? "idea" : "memo") : cat,
+          ...from,
           visibility: scope === "private" ? "private" : "shared",
           project_id: link?.project ?? stageRow?.project_id ?? (proj !== "all" && proj !== "none" ? proj : null),
           stage_ids: link?.stage ? [link.stage] : [],
@@ -271,6 +367,7 @@ function Notes() {
         .select("*")
         .single();
       creating.current = false;
+      setTrashView(false);
       if (error || !data) {
         alert("메모를 만들지 못했습니다.\n" + (error?.message ?? ""));
         return;
@@ -291,12 +388,94 @@ function Notes() {
 
   async function remove() {
     const d = draftRef.current;
-    if (!d || !confirm(`'${d.title || "제목 없음"}' 메모를 지울까요?\n되돌릴 수 없습니다.`)) return;
+    if (!d) return;
+    if (!plusRef.current) {
+      if (!confirm(`'${d.title || "제목 없음"}' 메모를 지울까요?\n되돌릴 수 없습니다.`)) return;
+      if (timer.current) clearTimeout(timer.current);
+      setDirty(false);
+      await supabase().from("notes").delete().eq("id", d.id);
+      setNotes((ns) => ns.filter((n) => n.id !== d.id));
+      router.replace(path);
+      return;
+    }
+    // 휴지통으로 (30일 뒤 자동 삭제)
     if (timer.current) clearTimeout(timer.current);
+    if (dirtyRef.current) await save();
     setDirty(false);
-    await supabase().from("notes").delete().eq("id", d.id);
-    setNotes((ns) => ns.filter((n) => n.id !== d.id));
+    const { data, error } = await supabase().from("notes").update({ deleted_at: new Date().toISOString() }).eq("id", d.id).select("id");
+    if (error || !data?.length) return alert("휴지통으로 옮기지 못했습니다. 권한을 확인하세요.");
+    setNotes((ns) => ns.map((n) => (n.id === d.id ? { ...n, deleted_at: new Date().toISOString() } : n)));
     router.replace(path);
+    say(`'${d.title || "제목 없음"}'을(를) 휴지통으로 옮겼습니다`, { label: "되돌리기", run: () => restore(d.id, true) });
+  }
+  async function restore(id: string, open = false) {
+    const { data, error } = await supabase().from("notes").update({ deleted_at: null }).eq("id", id).select("id");
+    if (error || !data?.length) return alert("되살리지 못했습니다. 권한을 확인하세요.");
+    setNotes((ns) => ns.map((n) => (n.id === id ? { ...n, deleted_at: null } : n)));
+    if (draftRef.current?.id === id) setDraft((x) => (x ? { ...x, deleted_at: null } : x));
+    if (open) router.replace(`${path}?id=${id}`);
+    say("되살렸습니다");
+  }
+  async function destroy(n: Note) {
+    if (!confirm(`'${n.title || "제목 없음"}'을(를) 완전히 지울까요?\n되돌릴 수 없습니다.`)) return;
+    const { data, error } = await supabase().from("notes").delete().eq("id", n.id).select("id");
+    if (error || !data?.length) return alert("지우지 못했습니다. 완전 삭제는 작성자나 관리자만 할 수 있어요.");
+    setNotes((ns) => ns.filter((x) => x.id !== n.id));
+    if (selectedId === n.id) router.replace(path);
+  }
+  async function openTrash() {
+    setTrashView(true);
+    await supabase().rpc("note_trash_purge"); // 30일 지난 것 정리
+    loadList();
+  }
+
+  // ---- 즐겨찾기 · 템플릿 -------------------------------------------------
+  async function toggleFav(id: string) {
+    const on = favs.has(id);
+    setFavs((f) => {
+      const n = new Set(f);
+      if (on) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+    const r = on ? await supabase().from("note_favorites").delete().eq("note_id", id).eq("user_id", me?.id ?? "") : await supabase().from("note_favorites").insert({ note_id: id });
+    if (r.error) loadFavs();
+  }
+  async function saveAsTemplate() {
+    const d = draftRef.current;
+    if (!d) return;
+    const name = window.prompt("템플릿 이름", d.title || (d.kind === "mindmap" ? "마인드맵 템플릿" : "새 템플릿"));
+    if (name === null) return;
+    const { data, error } = await supabase()
+      .from("notes")
+      .insert({
+        is_template: true,
+        title: name.trim() || "새 템플릿",
+        kind: d.kind,
+        category: d.category,
+        body_html: d.body_html,
+        body_text: d.body_text,
+        mindmap: d.mindmap,
+        icon: d.icon ?? null,
+        cover: d.cover ?? null,
+        visibility: d.visibility,
+        note_date: todayFn(),
+      })
+      .select(listCols())
+      .single();
+    if (error || !data) return alert("템플릿을 저장하지 못했습니다.\n" + (error?.message ?? ""));
+    setNotes((ns) => [data as unknown as Note, ...ns]);
+    say("템플릿으로 저장했습니다. [＋ ▾] 메뉴에서 골라 새 메모를 만들 수 있어요.");
+  }
+  async function deleteTemplate(t: Note) {
+    if (!confirm(`'${t.title || "템플릿"}' 템플릿을 지울까요?`)) return;
+    const { data, error } = await supabase().from("notes").delete().eq("id", t.id).select("id");
+    if (error || !data?.length) return alert("지우지 못했습니다. 템플릿을 만든 사람이나 관리자만 지울 수 있어요.");
+    setNotes((ns) => ns.filter((x) => x.id !== t.id));
+  }
+  function pickNew(c: NewChoice) {
+    if ("template" in c) create(c.template.kind, undefined, curFolder, { template: c.template });
+    else create(c.kind, undefined, curFolder, { preset: c.preset });
   }
 
   // ---- 폴더 ------------------------------------------------------------
@@ -380,12 +559,17 @@ function Notes() {
   const projectName = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
   const stageById = useMemo(() => Object.fromEntries(stages.map((s) => [s.id, s])), [stages]);
 
+  const live = useMemo(() => notes.filter((n) => !n.deleted_at && !n.is_template), [notes]);
+  const trash = useMemo(() => notes.filter((n) => n.deleted_at && !n.is_template), [notes]);
+  const templates = useMemo(() => notes.filter((n) => n.is_template && !n.deleted_at), [notes]);
+
   const shown = useMemo(() => {
     const k = q.trim().toLowerCase();
-    return notes.filter((n) => {
+    return live.filter((n) => {
       if (n.id === selectedId) return true; // 열어 둔 메모는 필터와 상관없이 보이게
       if (cat !== "all" && n.category !== cat) return false;
       if (scope === "mine" && n.author_id !== me?.id) return false;
+      if (scope === "mentioned" && !(n.mention_ids ?? []).includes(me?.id ?? "")) return false;
       if (scope === "private" && n.visibility !== "private") return false;
       if (proj === "none" && n.project_id) return false;
       if (proj !== "all" && proj !== "none" && n.project_id !== proj) return false;
@@ -395,7 +579,7 @@ function Notes() {
       }
       return true;
     });
-  }, [notes, q, cat, scope, proj, me?.id, projectName, stageById, selectedId, folderPath]);
+  }, [live, q, cat, scope, proj, me?.id, projectName, stageById, selectedId, folderPath]);
   const filtering = !!q.trim() || cat !== "all" || scope !== "all" || proj !== "all";
 
   const grouped = useMemo(() => {
@@ -409,9 +593,14 @@ function Notes() {
     return g;
   }, [shown]);
 
-  const canEdit = !!draft && !!me && (draft.author_id === me.id || (draft.visibility === "shared" && !!me.is_game_part));
+  const canEdit = !!draft && !!me && !draft.deleted_at && (draft.author_id === me.id || (draft.visibility === "shared" && !!me.is_game_part));
+  const favList = live.filter((n) => favs.has(n.id));
+  const recentList = recents.map((id) => live.find((n) => n.id === id)).filter((n): n is Note => !!n && !favs.has(n.id)).slice(0, 5);
   const isAuthor = !!draft && draft.author_id === me?.id;
   const fresh = params.get("fresh") === "1";
+
+  const exportMeta = () =>
+    draft ? `${CAT[draft.category].label} · ${draft.note_date.replace(/-/g, ".")} · ${displayName(profileById[draft.author_id ?? ""])}${draft.project_id ? ` · ${projectName[draft.project_id] ?? ""}` : ""}` : "";
 
   if (missing) {
     return (
@@ -433,13 +622,17 @@ function Notes() {
             <div className="flex items-center gap-1.5">
               <h1 className="text-base font-semibold">메모</h1>
               <Help content="회의록, 아이디어, 자유 메모를 남기는 곳입니다. 프로젝트와 상관없이 쓸 수 있고, 필요하면 프로젝트·단계에 연결해 그 단계 상세에서도 볼 수 있어요." />
-              <div className="ml-auto flex gap-1" data-tour="notes-new">
+              <div className="relative ml-auto flex gap-1" data-tour="notes-new">
                 <button className="btn-primary px-2.5 py-1 text-xs" onClick={() => create("doc")} title={curFolder && !noFolders ? `'${folderPath(curFolder)}' 폴더에 만들기` : undefined}>
                   📄 문서
                 </button>
                 <button className="btn-outline px-2.5 py-1 text-xs" onClick={() => create("mindmap")}>
                   🧠 마인드맵
                 </button>
+                <button className="btn-outline px-1.5 py-1 text-xs" onClick={() => setNewMenu((v) => !v)} title="회의록·내 템플릿으로 만들기" aria-label="템플릿으로 만들기">
+                  ▾
+                </button>
+                {newMenu && <NewNoteMenu templates={plus ? templates : []} meId={me?.id} isAdmin={!!me?.is_admin} onPick={pickNew} onDeleteTemplate={deleteTemplate} onClose={() => setNewMenu(false)} />}
               </div>
             </div>
             <input className="input py-1.5 text-sm" placeholder="제목·내용·프로젝트 검색" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -459,6 +652,7 @@ function Notes() {
                 <option value="all">모든 메모</option>
                 <option value="mine">내가 쓴 메모</option>
                 <option value="private">🔒 나만 보기</option>
+                {plus && <option value="mentioned">@ 나를 언급한 메모</option>}
               </select>
               <select className="input py-1 text-xs" value={proj} onChange={(e) => setProj(e.target.value)}>
                 <option value="all">모든 프로젝트</option>
@@ -486,7 +680,64 @@ function Notes() {
             </div>
           )}
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-            {loading ? (
+            {!trashView && !filtering && !loading && (favList.length > 0 || recentList.length > 0) && (
+              <div className="border-b border-black/[0.06] pb-1.5" data-tour="notes-favs">
+                {[
+                  { title: "⭐ 즐겨찾기", list: favList },
+                  { title: "🕘 최근 본 메모", list: recentList },
+                ]
+                  .filter((g) => g.list.length)
+                  .map((g) => (
+                    <div key={g.title}>
+                      <div className="px-3 pb-0.5 pt-2 text-[10px] font-medium text-slate-400">{g.title}</div>
+                      {g.list.map((n) => (
+                        <button
+                          key={n.id}
+                          onClick={() => go(n.id)}
+                          className={`flex w-full items-center gap-1.5 border-l-2 py-1 pl-5 pr-3 text-left text-sm ${n.id === selectedId ? "border-brand-500 bg-brand-500/[0.07] font-medium" : "border-transparent hover:bg-slate-50"}`}
+                        >
+                          <span className="text-xs">{n.icon || KIND_ICON[n.kind]}</span>
+                          <span className={`min-w-0 flex-1 truncate ${n.title ? "" : "text-slate-400"}`}>{(n.id === selectedId && draft ? draft.title : n.title) || "제목 없음"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+              </div>
+            )}
+            {trashView ? (
+              <div data-tour="notes-trash-list">
+                <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[11px] text-slate-500">
+                  <button className="rounded px-1.5 py-0.5 hover:bg-slate-100" onClick={() => setTrashView(false)}>
+                    ← 메모로
+                  </button>
+                  <span className="ml-auto text-slate-400">30일이 지나면 자동으로 지워져요</span>
+                </div>
+                {trash.length === 0 ? (
+                  <p className="p-6 text-center text-sm text-slate-400">휴지통이 비어 있습니다.</p>
+                ) : (
+                  trash.map((n) => {
+                    const left = Math.max(0, 30 - Math.floor((Date.now() - new Date(n.deleted_at as string).getTime()) / 86400000));
+                    return (
+                      <div key={n.id} className={`group flex items-center gap-1.5 px-3 py-1.5 text-sm ${n.id === selectedId ? "bg-brand-500/[0.07]" : "hover:bg-slate-50"}`}>
+                        <button className="min-w-0 flex-1 truncate text-left" onClick={() => go(n.id)} title="눌러서 내용 보기">
+                          <span className="mr-1 text-xs">{n.icon || KIND_ICON[n.kind]}</span>
+                          {n.title || "제목 없음"}
+                        </button>
+                        <span className="shrink-0 text-[10px] text-slate-400 group-hover:hidden">{left}일 남음</span>
+                        <button className="hidden shrink-0 rounded px-1 text-[11px] text-brand-600 hover:bg-brand-500/10 group-hover:block" onClick={() => restore(n.id)}>
+                          되살리기
+                        </button>
+                        {(n.author_id === me?.id || me?.is_admin) && (
+                          <button className="hidden shrink-0 rounded px-1 text-[11px] text-rose-600 hover:bg-rose-50 group-hover:block" onClick={() => destroy(n)}>
+                            완전 삭제
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : loading ? (
               <p className="p-6 text-center text-sm text-slate-400">불러오는 중…</p>
             ) : !noFolders && view === "tree" ? (
               <NoteTree
@@ -510,7 +761,7 @@ function Notes() {
                 onNewNote={(kind, folderId) => create(kind, undefined, folderId)}
               />
             ) : shown.length === 0 ? (
-              <p className="p-6 text-center text-sm text-slate-400">{notes.length ? "조건에 맞는 메모가 없습니다." : "아직 메모가 없습니다. 위에서 새로 만들어 보세요."}</p>
+              <p className="p-6 text-center text-sm text-slate-400">{live.length ? "조건에 맞는 메모가 없습니다." : "아직 메모가 없습니다. 위에서 새로 만들어 보세요."}</p>
             ) : (
               grouped.map((g) => (
                 <div key={g.month}>
@@ -528,7 +779,7 @@ function Notes() {
                             className={`block w-full border-l-2 px-3 py-2 text-left ${active ? "border-brand-500 bg-brand-500/[0.06]" : "border-transparent hover:bg-slate-50"}`}
                           >
                             <div className="flex items-center gap-1.5">
-                              <span className="text-xs">{KIND_ICON[view.kind]}</span>
+                              <span className="text-xs">{view.icon || KIND_ICON[view.kind]}</span>
                               <span className={`min-w-0 flex-1 truncate text-sm ${view.title ? "font-medium" : "text-slate-400"}`}>{view.title || "제목 없음"}</span>
                               {view.visibility === "private" && <span className="text-[10px]" title="나만 보기">🔒</span>}
                             </div>
@@ -547,6 +798,12 @@ function Notes() {
               ))
             )}
           </div>
+          {plus && !trashView && (
+            <button className="flex shrink-0 items-center gap-1.5 border-t border-black/[0.06] px-3 py-2 text-xs text-slate-500 hover:bg-slate-50" onClick={openTrash} data-tour="notes-trash">
+              🗑 휴지통
+              {trash.length > 0 && <span className="rounded-full bg-slate-100 px-1.5 text-[10px]">{trash.length}</span>}
+            </button>
+          )}
         </aside>
       )}
 
@@ -577,6 +834,20 @@ function Notes() {
           </div>
         ) : (
           <>
+            {plus && draft.cover && COVERS[draft.cover] && (
+              <div className="group relative h-20 shrink-0" style={{ background: COVERS[draft.cover] }}>
+                {canEdit && (
+                  <button className="absolute bottom-2 right-3 hidden rounded-md bg-white/85 px-2 py-0.5 text-[11px] text-slate-700 shadow-sm hover:bg-white group-hover:block" onClick={() => setPop("cover")}>
+                    커버 바꾸기
+                  </button>
+                )}
+                {pop === "cover" && (
+                  <div className="absolute bottom-0 right-3">
+                    <CoverPicker value={draft.cover} onPick={(v) => change({ cover: v })} onClose={() => setPop(null)} />
+                  </div>
+                )}
+              </div>
+            )}
             {/* 머리 */}
             <div className="space-y-2 border-b border-black/[0.06] px-4 py-3">
               <div className="flex items-center gap-2">
@@ -588,6 +859,18 @@ function Notes() {
                     {hideList ? "⇥" : "⇤"}
                   </button>
                 </Tip>
+                {plus && (draft.icon || canEdit) && (
+                  <div className="relative shrink-0" data-tour="notes-icon">
+                    <button
+                      className={`grid h-8 w-8 place-items-center rounded-md ${draft.icon ? "text-2xl" : "text-base opacity-30 hover:opacity-100"} ${canEdit ? "hover:bg-slate-100" : "cursor-default"}`}
+                      onClick={() => canEdit && setPop(pop === "icon" ? null : "icon")}
+                      title={canEdit ? (draft.icon ? "아이콘 바꾸기" : "아이콘 추가") : undefined}
+                    >
+                      {draft.icon || "😀"}
+                    </button>
+                    {pop === "icon" && <IconPicker value={draft.icon} onPick={(v) => change({ icon: v })} onClose={() => setPop(null)} />}
+                  </div>
+                )}
                 <input
                   className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-slate-300"
                   placeholder={draft.category === "meeting" ? "회의 제목 (예: 11월 전체 부서 미팅)" : draft.kind === "mindmap" ? "마인드맵 제목" : "제목"}
@@ -613,31 +896,74 @@ function Notes() {
                   }}
                 />
                 <span className="shrink-0 text-[11px] text-slate-400">
-                  {!canEdit ? "읽기 전용" : saveState === "saving" ? "저장 중…" : dirty ? "고치는 중" : saveState === "error" ? <span className="text-rose-600">저장 안 됨</span> : "저장됨"}
+                  {draft.deleted_at ? "휴지통" : !canEdit ? "읽기 전용" : saveState === "saving" ? "저장 중…" : dirty ? "고치는 중" : saveState === "error" ? <span className="text-rose-600">저장 안 됨</span> : "저장됨"}
                 </span>
+                {plus && canEdit && !draft.cover && (
+                  <div className="relative">
+                    <Tip content="커버 추가">
+                      <button className="btn-ghost px-1.5 py-0.5 text-sm opacity-50 hover:opacity-100" onClick={() => setPop(pop === "cover" ? null : "cover")}>
+                        🎨
+                      </button>
+                    </Tip>
+                    {pop === "cover" && <CoverPicker value={draft.cover} onPick={(v) => change({ cover: v })} onClose={() => setPop(null)} />}
+                  </div>
+                )}
+                {plus && !draft.deleted_at && (
+                  <Tip content={favs.has(draft.id) ? "즐겨찾기에서 빼기" : "즐겨찾기 (목록 위에 고정)"}>
+                    <button className={`btn-ghost px-1.5 py-0.5 text-base ${favs.has(draft.id) ? "text-amber-500" : "text-slate-300 hover:text-amber-500"}`} onClick={() => toggleFav(draft.id)} data-tour="notes-fav">
+                      {favs.has(draft.id) ? "★" : "☆"}
+                    </button>
+                  </Tip>
+                )}
+                {draft.kind === "doc" && (
+                  <Tip content={toc ? "목차 닫기" : "목차 보기"}>
+                    <button className={`btn-ghost hidden px-1.5 py-0.5 text-sm xl:block ${toc ? "text-ink" : "text-slate-400"}`} onClick={() => setToc(!toc)}>
+                      ☰
+                    </button>
+                  </Tip>
+                )}
                 <NoteMenu
-                  kind={draft.kind}
-                  canDelete={isAuthor || !!me?.is_admin}
-                  onDelete={remove}
-                  onPng={async () => {
-                    const blob = await mapRef.current?.exportPng();
-                    if (!blob) return;
-                    const a = document.createElement("a");
-                    a.href = URL.createObjectURL(blob);
-                    a.download = `${draft.title || "마인드맵"}.png`;
-                    a.click();
-                    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-                  }}
-                  onOutline={async () => {
-                    const html = mapRef.current?.outlineHtml();
-                    if (!html) return;
-                    const { data } = await supabase()
-                      .from("notes")
-                      .insert({ kind: "doc", title: `${draft.title || "마인드맵"} (개요)`, category: draft.category, body_html: html, body_text: htmlToText(html), project_id: draft.project_id, stage_ids: draft.stage_ids, visibility: draft.visibility, note_date: draft.note_date, ...(noFolders ? {} : { folder_id: draft.folder_id ?? null }) })
-                      .select("id")
-                      .single();
-                    if (data) go((data as { id: string }).id);
-                  }}
+                  items={[
+                    ...(plus ? [{ icon: "🕘", label: "버전 기록", run: () => setShowVersions(true) }] : []),
+                    ...(plus && canEdit ? [{ icon: "📋", label: "템플릿으로 저장", run: saveAsTemplate }] : []),
+                    ...(draft.kind === "doc"
+                      ? [
+                          { icon: "🖨️", label: "PDF로 저장 · 인쇄", run: () => exportPrint(draft.title, exportMeta(), draft.body_html ?? "") },
+                          { icon: "⬇", label: "마크다운으로 받기 (.md)", run: () => exportMarkdown(draft.title, draft.body_html ?? "") },
+                          { icon: "⬇", label: "Word로 받기 (.doc)", run: () => exportWord(draft.title, exportMeta(), draft.body_html ?? "") },
+                        ]
+                      : [
+                          {
+                            icon: "🖼️",
+                            label: "이미지로 저장 (PNG)",
+                            run: async () => {
+                              const blob = await mapRef.current?.exportPng();
+                              if (!blob) return;
+                              const a = document.createElement("a");
+                              a.href = URL.createObjectURL(blob);
+                              a.download = `${draft.title || "마인드맵"}.png`;
+                              a.click();
+                              setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+                            },
+                          },
+                          { icon: "⬇", label: "개요를 마크다운으로 (.md)", run: () => exportMarkdownText(draft.title, mindmapText(draft.mindmap).replace(/^( *)/gm, (m) => m + "- ")) },
+                          {
+                            icon: "📄",
+                            label: "개요를 새 문서로",
+                            run: async () => {
+                              const html = mapRef.current?.outlineHtml();
+                              if (!html) return;
+                              const { data } = await supabase()
+                                .from("notes")
+                                .insert({ kind: "doc", title: `${draft.title || "마인드맵"} (개요)`, category: draft.category, body_html: html, body_text: htmlToText(html), project_id: draft.project_id, stage_ids: draft.stage_ids, visibility: draft.visibility, note_date: draft.note_date, ...(noFolders ? {} : { folder_id: draft.folder_id ?? null }) })
+                                .select("id")
+                                .single();
+                              if (data) go((data as { id: string }).id);
+                            },
+                          },
+                        ]),
+                    ...((plus ? canEdit : isAuthor || !!me?.is_admin) ? [{ icon: "🗑", label: plus ? "휴지통으로 옮기기" : "메모 지우기", danger: true, run: remove }] : []),
+                  ]}
                 />
               </div>
 
@@ -728,10 +1054,25 @@ function Notes() {
               </div>
             )}
 
+            {draft.deleted_at && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-900">
+                <span>🗑 휴지통에 있는 메모입니다. 30일이 지나면 자동으로 지워져요.</span>
+                <button className="btn-outline ml-auto bg-white py-0.5 text-xs" onClick={() => restore(draft.id)}>
+                  되살리기
+                </button>
+                {(isAuthor || me?.is_admin) && (
+                  <button className="rounded-md px-2 py-0.5 text-rose-700 hover:bg-rose-100" onClick={() => destroy(draft)}>
+                    완전 삭제
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* 본문 */}
             <div className="npd-note-body flex min-h-0 flex-1 flex-col">
               {draft.kind === "doc" ? (
-                <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+                <div className="flex min-h-0 flex-1">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-3">
                   {canEdit && draft.category === "meeting" && isEmptyHtml(draft.body_html) && (
                     <button
                       className="self-start rounded-md bg-violet-50 px-2 py-1 text-xs text-violet-700 hover:bg-violet-100"
@@ -752,10 +1093,13 @@ function Notes() {
                       onSubmit={() => save()}
                       large
                       fill
+                      blocks
                       minHeight={400}
-                      placeholder="자유롭게 적어보세요. (Ctrl+1~4 글자 크기 · 자동 저장)"
+                      placeholder="자유롭게 적어보세요. ' / ' 로 제목·토글·표·이미지 넣기 · 자동 저장"
                     />
                   </div>
+                </div>
+                {toc && <Toc html={draft.body_html} onClose={() => setToc(false)} />}
                 </div>
               ) : (
                 <>
@@ -770,16 +1114,53 @@ function Notes() {
                   )}
                 </>
               )}
+              {plus && <Backlinks key={draft.id} noteId={draft.id} onOpen={(id) => go(id)} />}
             </div>
           </>
         )}
       </section>
+
+      {showVersions && draft && (
+        <VersionsModal
+          note={draft}
+          current={{ title: draft.title, body_html: draft.body_html, mindmap: draft.mindmap }}
+          canRestore={canEdit}
+          profileById={profileById}
+          onRestore={(v: NoteVersion) => {
+            change({ title: v.title ?? draft.title, body_html: v.body_html, mindmap: v.mindmap });
+            setRk((k) => k + 1);
+            say("예전 버전으로 되돌렸습니다");
+          }}
+          onClose={() => setShowVersions(false)}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-xl">
+          <span>{toast.text}</span>
+          {toast.action && (
+            <button
+              className="rounded-md bg-white/15 px-2 py-0.5 text-xs font-medium hover:bg-white/25"
+              onClick={() => {
+                toast.action?.run();
+                setToast(null);
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
+          <button className="text-white/60 hover:text-white" onClick={() => setToast(null)} aria-label="닫기">
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ---- ⋯ 메뉴 ---------------------------------------------------------------
-function NoteMenu({ kind, canDelete, onDelete, onPng, onOutline }: { kind: NoteKind; canDelete: boolean; onDelete: () => void; onPng: () => void; onOutline: () => void }) {
+type MenuItem = { icon: string; label: string; run: () => void; danger?: boolean };
+function NoteMenu({ items }: { items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -788,29 +1169,23 @@ function NoteMenu({ kind, canDelete, onDelete, onPng, onOutline }: { kind: NoteK
     document.addEventListener("mousedown", off);
     return () => document.removeEventListener("mousedown", off);
   }, [open]);
-  if (kind === "doc" && !canDelete) return null;
+  if (!items.length) return null;
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={ref} data-tour="notes-menu">
       <button className="btn-ghost px-2 py-0.5" onClick={() => setOpen((v) => !v)} aria-label="더보기">
         ⋯
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-48 overflow-hidden rounded-lg border border-black/10 bg-white py-1 text-sm shadow-lg">
-          {kind === "mindmap" && (
-            <>
-              <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => (setOpen(false), onPng())}>
-                🖼️ 이미지로 저장 (PNG)
+        <div className="absolute right-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-lg border border-black/10 bg-white py-1 text-sm shadow-lg">
+          {items.map((it, i) => (
+            <div key={it.label}>
+              {it.danger && i > 0 && <div className="my-1 border-t border-black/[0.06]" />}
+              <button className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${it.danger ? "text-rose-600 hover:bg-rose-50" : "hover:bg-slate-50"}`} onClick={() => (setOpen(false), it.run())}>
+                <span className="w-5 text-center">{it.icon}</span>
+                {it.label}
               </button>
-              <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-50" onClick={() => (setOpen(false), onOutline())}>
-                📄 개요를 새 문서로
-              </button>
-            </>
-          )}
-          {canDelete && (
-            <button className="block w-full px-3 py-1.5 text-left text-rose-600 hover:bg-rose-50" onClick={() => (setOpen(false), onDelete())}>
-              메모 지우기
-            </button>
-          )}
+            </div>
+          ))}
         </div>
       )}
     </div>
