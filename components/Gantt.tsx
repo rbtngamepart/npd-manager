@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { addDays, diffDays, maxDate, minDate, monthStart, nextMonth, short, weekNumber } from "@/lib/dates";
 import { STATUS_META, stageFinalStatus } from "@/lib/status";
 import type { Stage, StageDep, StageGroup, StageLabel } from "@/lib/types";
@@ -12,6 +12,133 @@ import type { DeptColorFn } from "@/lib/deptColors";
 import { Fragment } from "react";
 
 type Scale = "week" | "month";
+
+// ---- 확대·축소 ---------------------------------------------------------------
+export type Tier = "day" | "week" | "month" | "quarter" | "half" | "year";
+/** 단위별 기본 배율 (하루당 px) */
+export const ZOOM_PRESETS: { tier: Tier; label: string; ppd: number }[] = [
+  { tier: "day", label: "일", ppd: 30 },
+  { tier: "week", label: "주", ppd: 6 },
+  { tier: "month", label: "월", ppd: 3.2 },
+  { tier: "quarter", label: "분기", ppd: 1.3 },
+  { tier: "half", label: "반기", ppd: 0.7 },
+  { tier: "year", label: "연", ppd: 0.38 },
+];
+export const PPD_MIN = 0.22;
+export const PPD_MAX = 60;
+export const clampPpd = (n: number) => Math.min(PPD_MAX, Math.max(PPD_MIN, n));
+export function tierOf(ppd: number): Tier {
+  return ppd >= 14 ? "day" : ppd >= 4.2 ? "week" : ppd >= 1.9 ? "month" : ppd >= 0.95 ? "quarter" : ppd >= 0.5 ? "half" : "year";
+}
+/** 예전 주/월 버튼 값 → 배율 */
+export const scaleToPpd = (sc: Scale) => (sc === "week" ? 6 : 3.2);
+
+/** 확대·축소 버튼 (페이지 도구 줄에 둠) */
+export function ZoomControl({ ppd, onChange, onFit }: { ppd: number; onChange: (n: number) => void; onFit?: () => void }) {
+  const t = tierOf(ppd);
+  return (
+    <div className="flex items-center gap-1" data-tour="gantt-zoom">
+      <button className="btn-ghost h-7 w-7 px-0 text-sm" onClick={() => onChange(clampPpd(ppd / 1.5))} title="축소 (Shift+휠 아래로)" disabled={ppd <= PPD_MIN}>
+        −
+      </button>
+      <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs">
+        {ZOOM_PRESETS.map((z) => (
+          <button key={z.tier} onClick={() => onChange(z.ppd)} className={`rounded-md px-2 py-1 ${t === z.tier ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}>
+            {z.label}
+          </button>
+        ))}
+      </div>
+      <button className="btn-ghost h-7 w-7 px-0 text-sm" onClick={() => onChange(clampPpd(ppd * 1.5))} title="확대 (Shift+휠 위로)" disabled={ppd >= PPD_MAX}>
+        +
+      </button>
+      {onFit && (
+        <button className="btn-ghost h-7 px-2 text-xs" onClick={onFit} title="모든 단계가 한 화면에 들어오게">
+          전체
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 간트 배율 (하루당 px), 화면별로 기억 */
+export function useGanttZoom(key: string, def: number) {
+  const [ppd, setPpdState] = useState(def);
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem(key));
+      if (v > 0) setPpdState(clampPpd(v));
+    } catch {
+      /* 무시 */
+    }
+  }, [key]);
+  const setPpd = (n: number) => {
+    const v = clampPpd(n);
+    setPpdState(v);
+    try {
+      localStorage.setItem(key, String(v));
+    } catch {
+      /* 무시 */
+    }
+  };
+  const [fitKey, setFitKey] = useState(0);
+  return { ppd, setPpd, fitKey, fit: () => setFitKey((k) => k + 1) };
+}
+
+/** 단위 칸 만들기 [start, end) */
+type Unit = { start: string; end: string; label: string; short: string; weekend?: boolean; current?: boolean };
+function unitsOf(kind: Tier, from: string, to: string, today: string, projectStart: string | null, withYear: boolean): Unit[] {
+  const out: Unit[] = [];
+  const [fy, fm] = from.split("-").map(Number);
+  const iso = (y: number, m: number) => `${y}-${String(m).padStart(2, "0")}-01`;
+  if (kind === "day") {
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const dt = new Date(d + "T00:00:00");
+      const wd = dt.getDay();
+      out.push({ start: d, end: addDays(d, 1), label: String(dt.getDate()), short: String(dt.getDate()), weekend: wd === 0 || wd === 6, current: d === today });
+    }
+  } else if (kind === "week") {
+    for (let d = from; d <= to; d = addDays(d, 7)) {
+      const lab = projectStart ? String(weekNumber(projectStart, d)) : short(d);
+      out.push({ start: d, end: addDays(d, 7), label: lab, short: lab, current: today >= d && today < addDays(d, 7) });
+    }
+  } else if (kind === "month") {
+    for (let m = monthStart(from); m <= to; m = nextMonth(m)) {
+      const [y, mo] = m.split("-").map(Number);
+      const first = out.length === 0 || mo === 1;
+      out.push({ start: m, end: nextMonth(m), label: withYear && first ? `${y}.${mo}월` : `${mo}월`, short: withYear && first ? `${String(y).slice(2)}.${mo}` : String(mo), current: today >= m && today < nextMonth(m) });
+    }
+  } else {
+    const step = kind === "quarter" ? 3 : kind === "half" ? 6 : 12;
+    let y = fy;
+    let m = Math.floor((fm - 1) / step) * step + 1;
+    for (;;) {
+      const st = iso(y, m);
+      if (st > to) break;
+      let ny = y;
+      let nm = m + step;
+      if (nm > 12) {
+        nm -= 12;
+        ny += 1;
+      }
+      const en = iso(ny, nm);
+      const idx = Math.floor((m - 1) / step) + 1;
+      const label = kind === "quarter" ? `${idx}분기` : kind === "half" ? (idx === 1 ? "상반기" : "하반기") : `${y}년`;
+      const sh = kind === "quarter" ? `Q${idx}` : kind === "half" ? (idx === 1 ? "상" : "하") : String(y);
+      out.push({ start: st, end: en, label, short: sh, current: today >= st && today < en });
+      y = ny;
+      m = nm;
+    }
+  }
+  return out;
+}
+const TIER_ROWS: Record<Tier, [Tier | null, Tier]> = {
+  day: ["month", "day"],
+  week: ["month", "week"],
+  month: ["year", "month"],
+  quarter: ["year", "quarter"],
+  half: ["year", "half"],
+  year: [null, "year"],
+};
 type DragMode = "move" | "start" | "end" | "create";
 
 interface Drag {
@@ -59,6 +186,9 @@ export function Gantt({
   onStageContext,
   onGroupContext,
   onBlankContext,
+  ppd: ppdProp,
+  onPpd,
+  fitKey,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -97,6 +227,11 @@ export function Gantt({
   onStageContext?: (e: React.MouseEvent, s: Stage) => void;
   onGroupContext?: (e: React.MouseEvent, g: StageGroup) => void;
   onBlankContext?: (e: React.MouseEvent) => void;
+  /** 확대·축소 배율 (하루당 px). 주면 scale 대신 씀 */
+  ppd?: number;
+  onPpd?: (n: number) => void;
+  /** 바뀌면 모든 단계가 한 화면에 들어오게 맞춤 */
+  fitKey?: number;
 }) {
   const [dragItem, setDragItem] = useState<TreeRef | null>(null);
   const [over, setOver] = useState<(TreeRef & { zone: DropZone }) | null>(null);
@@ -163,7 +298,8 @@ export function Gantt({
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [menu]);
-  const ppd = scale === "week" ? 6 : 3.2; // px per day
+  const ppd = ppdProp ?? scaleToPpd(scale); // px per day
+  const tier = tierOf(ppd);
   const scroller = useRef<HTMLDivElement>(null);
   const [boxW, setBoxW] = useState(1200);
 
@@ -185,57 +321,148 @@ export function Gantt({
   const { rangeStart, days } = useMemo(() => {
     const all = stages.flatMap((s) => [s.plan_start, s.plan_end, s.actual_start, s.actual_end, s.expected_end]);
     let rs = projectStart ?? minDate(...all, today) ?? today;
-    if (scale === "month") rs = monthStart(rs);
-    const minEnd = addDays(rs, scale === "week" ? 26 * 7 : 365);
-    const re = addDays(maxDate(...all, today, minEnd)!, scale === "week" ? 28 : 45);
+    // 주 단위 이상 확대면 프로젝트 시작일 기준(주차가 맞게), 더 축소하면 달 첫날부터
+    if (tier !== "day" && tier !== "week") rs = monthStart(addDays(rs, tier === "month" ? 0 : -15));
+    else if (tier === "day") rs = addDays(rs, -7);
+    const minEnd = addDays(rs, tier === "week" || tier === "day" ? 26 * 7 : 365);
+    const re = addDays(maxDate(...all, today, minEnd)!, tier === "day" ? 21 : tier === "week" ? 28 : Math.round(60 / Math.min(1, ppd / 3.2)));
     const fill = Math.ceil((boxW - LEFT) / ppd);
     return { rangeStart: rs, days: Math.max(diffDays(rs, re) + 1, fill) };
-  }, [stages, projectStart, scale, today, boxW, ppd]);
+  }, [stages, projectStart, tier, today, boxW, ppd]);
 
   const width = Math.ceil(days * ppd);
   const rangeEnd = addDays(rangeStart, days - 1);
   const x = (d: string) => diffDays(rangeStart, d) * ppd;
   const dayAt = (px: number) => addDays(rangeStart, Math.floor(px / ppd));
 
-  // 처음 열 때 오늘 근처로 스크롤
-  useEffect(() => {
+  // 확대·축소할 때 기준 날짜가 화면의 같은 자리에 오도록
+  const anchor = useRef<{ date: string; frac: number; sx: number } | null>(null);
+  const firstScroll = useRef(true);
+  useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    el.scrollLeft = Math.max(0, x(today) - 240);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scale, rangeStart]);
-
-  const months = useMemo(() => {
-    const out: { label: string; left: number; w: number }[] = [];
-    for (let m = monthStart(rangeStart); m <= rangeEnd; m = nextMonth(m)) {
-      const a = m < rangeStart ? rangeStart : m;
-      const nm = nextMonth(m);
-      const b = nm > rangeEnd ? addDays(rangeEnd, 1) : nm;
-      const [y, mo] = m.split("-");
-      const showYear = out.length === 0 || mo === "01";
-      out.push({ label: showYear ? `${y}.${Number(mo)}월` : `${Number(mo)}월`, left: x(a), w: diffDays(a, b) * ppd });
+    const a = anchor.current;
+    if (a) {
+      el.scrollLeft = Math.max(0, LEFT + (diffDays(rangeStart, a.date) + a.frac) * ppd - a.sx);
+      anchor.current = null;
+    } else if (firstScroll.current) {
+      el.scrollLeft = Math.max(0, x(today) - 240);
     }
-    return out;
+    firstScroll.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeStart, rangeEnd, ppd]);
+  }, [ppd, rangeStart]);
 
-  const weeks = useMemo(() => {
-    if (scale !== "week") return [];
-    const out: { label: string; left: number; date: string; current: boolean }[] = [];
-    for (let d = rangeStart; d <= rangeEnd; d = addDays(d, 7)) {
-      out.push({
-        label: projectStart ? String(weekNumber(projectStart, d)) : short(d),
-        left: x(d),
-        date: d,
-        current: today >= d && today < addDays(d, 7),
-      });
-    }
-    return out;
+  /** 화면 x(스크롤 상자 기준) → 그 자리의 날짜 */
+  const dateAtScreen = (sx: number) => {
+    const el = scroller.current!;
+    const px = el.scrollLeft + sx - LEFT;
+    const dd = px / ppd;
+    return { date: addDays(rangeStart, Math.floor(dd)), frac: dd - Math.floor(dd) };
+  };
+  const zoomTo = (next: number, sx?: number) => {
+    const el = scroller.current;
+    if (!el || !onPpd) return;
+    const n = clampPpd(next);
+    if (Math.abs(n - ppd) < 0.001) return;
+    const at = sx ?? LEFT + (el.clientWidth - LEFT) / 2;
+    anchor.current = { ...dateAtScreen(at), sx: at };
+    onPpd(n);
+  };
+  const zoomRef = useRef(zoomTo);
+  zoomRef.current = zoomTo;
+
+  // 버튼으로 배율이 바뀌면 화면 가운데 기준
+  const lastPpd = useRef(ppd);
+  useLayoutEffect(() => {
+    lastPpd.current = ppd;
+  }, [ppd]);
+
+  // Shift+휠: 마우스 자리 기준으로 확대·축소
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !onPpd) return;
+    const on = (e: WheelEvent) => {
+      if (!e.shiftKey) return;
+      const r = el.getBoundingClientRect();
+      const sx = e.clientX - r.left;
+      if (sx < LEFT) return;
+      e.preventDefault();
+      const d = e.deltaY || e.deltaX;
+      if (!d) return;
+      zoomRef.current(lastPpd.current * (d < 0 ? 1.18 : 1 / 1.18), sx);
+    };
+    el.addEventListener("wheel", on, { passive: false });
+    return () => el.removeEventListener("wheel", on);
+  }, [onPpd]);
+
+  // 전체 보기
+  useEffect(() => {
+    if (!fitKey || !onPpd) return;
+    const el = scroller.current;
+    const all = stages.flatMap((s) => [s.plan_start, s.plan_end, s.actual_end, s.expected_end]).filter(Boolean) as string[];
+    if (!el || !all.length) return;
+    const a = minDate(...all)!;
+    const b = maxDate(...all)!;
+    const span = diffDays(a, b) + 1;
+    const n = clampPpd(((el.clientWidth - LEFT) * 0.94) / span);
+    anchor.current = { date: a, frac: 0, sx: LEFT + (el.clientWidth - LEFT) * 0.03 };
+    onPpd(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scale, rangeStart, rangeEnd, projectStart, today]);
+  }, [fitKey]);
+
+  // Shift+끌기: 고른 날짜 구간이 화면에 꽉 차게 (Shift+클릭은 2배 확대)
+  const [band, setBand] = useState<{ x0: number; x1: number } | null>(null);
+  const bandRef = useRef<{ x0: number; x1: number; id: number } | null>(null);
+  const onBandDown = (e: React.PointerEvent) => {
+    if (!e.shiftKey || e.button !== 0 || !onPpd) return;
+    const el = scroller.current!;
+    const r = el.getBoundingClientRect();
+    const sx = e.clientX - r.left;
+    if (sx < LEFT) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.setPointerCapture(e.pointerId);
+    const cx = el.scrollLeft + sx - LEFT;
+    bandRef.current = { x0: cx, x1: cx, id: e.pointerId };
+    setBand({ x0: cx, x1: cx });
+  };
+  const onBandMove = (e: React.PointerEvent) => {
+    const b = bandRef.current;
+    if (!b || b.id !== e.pointerId) return;
+    const el = scroller.current!;
+    const r = el.getBoundingClientRect();
+    const cx = Math.max(0, Math.min(width, el.scrollLeft + e.clientX - r.left - LEFT));
+    b.x1 = cx;
+    setBand({ x0: b.x0, x1: cx });
+  };
+  const onBandUp = (e: React.PointerEvent) => {
+    const b = bandRef.current;
+    if (!b || b.id !== e.pointerId) return;
+    bandRef.current = null;
+    setBand(null);
+    const el = scroller.current!;
+    const lo = Math.min(b.x0, b.x1);
+    const hi = Math.max(b.x0, b.x1);
+    if (hi - lo < 6) {
+      // Shift+클릭: 그 자리 2배 확대
+      zoomTo(ppd * 2, lo - el.scrollLeft + LEFT);
+      return;
+    }
+    const d0 = lo / ppd;
+    const span = Math.max(1, (hi - lo) / ppd);
+    const n = clampPpd((el.clientWidth - LEFT) / span);
+    anchor.current = { date: addDays(rangeStart, Math.floor(d0)), frac: d0 - Math.floor(d0), sx: LEFT };
+    onPpd?.(n);
+  };
+
+  const [topKind, botKind] = TIER_ROWS[tier];
+  const topUnits = useMemo(() => (topKind ? unitsOf(topKind, rangeStart, rangeEnd, today, projectStart, true) : []), [topKind, rangeStart, rangeEnd, today, projectStart]);
+  const botUnits = useMemo(() => unitsOf(botKind, rangeStart, rangeEnd, today, projectStart, !topKind), [botKind, rangeStart, rangeEnd, today, projectStart, topKind]);
+  const clipL = (u: Unit) => x(u.start < rangeStart ? rangeStart : u.start);
+  const clipW = (u: Unit) => diffDays(u.start < rangeStart ? rangeStart : u.start, u.end > addDays(rangeEnd, 1) ? addDays(rangeEnd, 1) : u.end) * ppd;
 
   function begin(e: React.PointerEvent, s: Stage, mode: DragMode) {
-    if (!canEdit || e.button !== 0) return;
+    if (!canEdit || e.button !== 0 || e.shiftKey) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     if (mode === "create") {
@@ -302,7 +529,7 @@ export function Gantt({
 
   // 그릴 줄 목록 + 각 줄의 세로 위치 (선후 관계 화살표용)
   const items: Row[] = rows ?? stages.map((s, i) => ({ kind: "stage" as const, stage: s, depth: 0, no: i + 1, children: [], collapsed: false }));
-  const headH = scale === "week" ? 52 : 36;
+  const headH = 52;
   const rowY = new Map<string, number>();
   {
     let y = headH;
@@ -346,59 +573,63 @@ export function Gantt({
     <div
       ref={scroller}
       className="scroll-thin relative max-h-[calc(100vh-250px)] min-h-[300px] overflow-auto"
-      style={{ userSelect: drag ? "none" : undefined }}
+      style={{ userSelect: drag || band ? "none" : undefined }}
       onContextMenu={onBlankContext}
+      onPointerDownCapture={onBandDown}
+      onPointerMove={onBandMove}
+      onPointerUp={onBandUp}
+      onPointerCancel={() => ((bandRef.current = null), setBand(null))}
     >
       <div style={{ width: LEFT + width }} className="relative">
         {/* 헤더 */}
         <div className="sticky top-0 z-20 flex border-b border-black/[0.08] bg-white">
           <div
             className="sticky left-0 z-30 flex shrink-0 items-end border-r border-black/[0.08] bg-white px-3 pb-1.5 text-xs font-medium text-slate-500"
-            style={{ width: LEFT, height: scale === "week" ? 52 : 36 }}
+            style={{ width: LEFT, height: 52 }}
             data-gantt-left
           >
             <span>단계</span>
             {headerActions && <span className="ml-auto flex items-center gap-1 pb-0.5">{headerActions}</span>}
           </div>
-          <div className="relative" style={{ width, height: scale === "week" ? 52 : 36 }}>
-            {months.map((m) => (
-              <div
-                key={m.label + m.left}
-                className="absolute top-0 flex h-[26px] items-center border-l border-black/[0.08] px-1.5 text-xs font-medium text-slate-600"
-                style={{ left: m.left, width: m.w }}
-              >
-                <span className="truncate">{m.label}</span>
-              </div>
-            ))}
-            {scale === "week" &&
-              weeks.map((w) => (
-                <div
-                  key={w.date}
-                  title={`${projectStart ? w.label + "주차 · " : ""}${short(w.date)}~${short(addDays(w.date, 6))}`}
-                  className={`absolute top-[26px] flex h-[26px] items-center justify-center border-l border-black/[0.05] text-[11px] tabular-nums ${
-                    w.current ? "bg-brand-50 font-semibold text-brand-600" : "text-slate-400"
-                  }`}
-                  style={{ left: w.left, width: 7 * ppd }}
-                >
-                  {w.label}
+          <div className="relative select-none" style={{ width, height: 52 }} title={onPpd ? "Shift+끌기: 그 구간 확대 · Shift+휠: 확대·축소" : undefined}>
+            {topUnits.map((u) => {
+              const w = clipW(u);
+              return (
+                <div key={"t" + u.start} className="absolute top-0 flex h-[26px] items-center border-l border-black/[0.08] px-1.5 text-xs font-medium text-slate-600" style={{ left: clipL(u), width: w }}>
+                  <span className="sticky left-[288px] truncate">{w > u.label.length * 8 + 8 ? u.label : w > 26 ? u.short : ""}</span>
                 </div>
-              ))}
+              );
+            })}
+            {botUnits.map((u) => {
+              const w = clipW(u);
+              const text = w > u.label.length * 7.5 + 6 ? u.label : w > u.short.length * 7 + 4 ? u.short : "";
+              return (
+                <div
+                  key={"b" + u.start}
+                  title={botKind === "week" ? `${projectStart ? u.label + "주차 · " : ""}${short(u.start)}~${short(addDays(u.end, -1))}` : botKind === "day" ? u.start : undefined}
+                  className={`absolute flex items-center justify-center border-l text-[11px] tabular-nums ${topKind ? "top-[26px] h-[26px]" : "top-0 h-[52px] text-xs"} ${
+                    u.current ? "border-black/[0.05] bg-brand-50 font-semibold text-brand-600" : u.weekend ? "border-black/[0.05] bg-slate-50 text-slate-400" : "border-black/[0.05] text-slate-400"
+                  }`}
+                  style={{ left: clipL(u), width: w }}
+                >
+                  {text}
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* 배경 격자 + 오늘 선 */}
-        <div className="pointer-events-none absolute bottom-0 z-0" style={{ left: LEFT, width, top: scale === "week" ? 52 : 36 }}>
-          {scale === "week"
-            ? weeks.map((w) => (
-                <div
-                  key={w.date}
-                  className={`absolute bottom-0 top-0 border-l ${w.current ? "border-brand-100 bg-brand-50/40" : "border-black/[0.035]"}`}
-                  style={{ left: w.left, width: 7 * ppd }}
-                />
-              ))
-            : months.map((m) => (
-                <div key={m.left} className="absolute bottom-0 top-0 border-l border-black/[0.05]" style={{ left: m.left }} />
-              ))}
+        <div className="pointer-events-none absolute bottom-0 z-0" style={{ left: LEFT, width, top: 52 }}>
+          {botUnits.map((u) => (
+            <div
+              key={u.start}
+              className={`absolute bottom-0 top-0 border-l ${u.current && botKind !== "year" ? "border-brand-100 bg-brand-50/40" : u.weekend ? "border-black/[0.03] bg-slate-50/70" : botKind === "day" ? "border-black/[0.03]" : "border-black/[0.045]"}`}
+              style={{ left: clipL(u), width: clipW(u) }}
+            />
+          ))}
+          {topKind && topUnits.map((u) => <div key={"tl" + u.start} className="absolute bottom-0 top-0 border-l border-black/[0.07]" style={{ left: clipL(u) }} />)}
+          {band && <div className="absolute bottom-0 top-[-52px] z-20 border-x-2 border-brand-500 bg-brand-500/10" style={{ left: Math.min(band.x0, band.x1), width: Math.abs(band.x1 - band.x0) }} />}
           {todayX !== null && <div className="absolute bottom-0 top-0 w-px bg-brand-500" style={{ left: todayX }} />}
         </div>
 
@@ -500,7 +731,7 @@ export function Gantt({
                   {sp.start && sp.end && (
                     <div
                       className="absolute top-[11px] h-[10px] overflow-hidden rounded-sm bg-slate-300"
-                      style={{ left: x(sp.start), width: Math.max(ppd, (diffDays(sp.start, sp.end) + 1) * ppd) }}
+                      style={{ left: x(sp.start), width: Math.max(Math.max(ppd, 2), (diffDays(sp.start, sp.end) + 1) * ppd) }}
                       title={`${g.name}\n${short(sp.start)} ~ ${short(sp.end)} · 진행률 ${sp.progress}%`}
                     >
                       <div className="h-full bg-slate-600" style={{ width: `${sp.progress}%` }} />
@@ -685,7 +916,7 @@ export function Gantt({
                     return (
                       <div
                         className="pointer-events-none absolute top-[3px] h-[3px] rounded-full bg-slate-500/70"
-                        style={{ left: x(sp.start), width: Math.max(ppd, (diffDays(sp.start, sp.end) + 1) * ppd) }}
+                        style={{ left: x(sp.start), width: Math.max(Math.max(ppd, 2), (diffDays(sp.start, sp.end) + 1) * ppd) }}
                         title={`하위 단계 포함 ${short(sp.start)} ~ ${short(sp.end)}`}
                       />
                     );
@@ -710,7 +941,7 @@ export function Gantt({
                     }`}
                     style={{
                       left: x(ps),
-                      width: Math.max(ppd, (diffDays(ps, pe) + 1) * ppd),
+                      width: Math.max(Math.max(ppd, 2), (diffDays(ps, pe) + 1) * ppd),
                       ...(byDept ? { background: dc.light, boxShadow: `inset 0 0 0 1px ${dc.solid}55` } : {}),
                     }}
                     onPointerDown={(e) => (s.skipped || locked ? undefined : begin(e, s, "move"))}
@@ -745,7 +976,7 @@ export function Gantt({
                 {s.actual_start && actualEnd && !s.skipped && (
                   <div
                     className="absolute top-[29px] h-[4px] rounded-full bg-ink/70"
-                    style={{ left: x(s.actual_start), width: Math.max(ppd, (diffDays(s.actual_start, actualEnd) + 1) * ppd) }}
+                    style={{ left: x(s.actual_start), width: Math.max(Math.max(ppd, 2), (diffDays(s.actual_start, actualEnd) + 1) * ppd) }}
                     title={`실제 ${short(s.actual_start)} ~ ${s.actual_end ? short(s.actual_end) : "진행 중"}`}
                   />
                 )}

@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
-import { Gantt, type GroupAction, type TreeRef } from "@/components/Gantt";
+import { Gantt, ZoomControl, useGanttZoom, type GroupAction, type TreeRef } from "@/components/Gantt";
 import { StagePanel } from "@/components/StagePanel";
 import { ProgressTable } from "@/components/ProgressTable";
 import { ImportDialog } from "@/components/ImportDialog";
@@ -88,7 +88,8 @@ function ProjectPage() {
   };
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("gantt");
-  const [scale, setScale] = useState<"week" | "month">("week");
+  const [scale] = useState<"week" | "month">("week");
+  const zoom = useGanttZoom("npd-gantt-ppd", 6);
   const [selected, setSelected] = useState<string | null>(search.get("stage"));
   // 단계 패널을 닫거나 다른 단계로 바꿀 때 저장 안 한 입력이 있으면 확인
   const selectStage = async (sid: string | null) => {
@@ -919,16 +920,8 @@ function ProjectPage() {
               </>
             )}
             {tab === "gantt" && (
-              <div className="mr-2 inline-flex rounded-lg bg-black/[0.04] p-0.5 text-xs" data-tour="gantt-scale">
-                {(["week", "month"] as const).map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setScale(s)}
-                    className={`rounded-md px-2.5 py-1 ${scale === s ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}
-                  >
-                    {s === "week" ? "주" : "월"}
-                  </button>
-                ))}
+              <div className="mr-2" data-tour="gantt-scale">
+                <ZoomControl ppd={zoom.ppd} onChange={zoom.setPpd} onFit={zoom.fit} />
               </div>
             )}
             {calEvents !== null && (tab === "gantt" || tab === "pm") && (
@@ -1011,6 +1004,9 @@ function ProjectPage() {
                 groupByDept={groupDept}
                 projectStart={project.start_date}
                 scale={scale}
+                ppd={zoom.ppd}
+                onPpd={zoom.setPpd}
+                fitKey={zoom.fitKey}
                 canEdit={canEdit}
                 today={today}
                 selectedId={selected}

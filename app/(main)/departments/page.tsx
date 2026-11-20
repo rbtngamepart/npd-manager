@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
-import { Gantt } from "@/components/Gantt";
+import { Gantt, ZoomControl, useGanttZoom } from "@/components/Gantt";
 import { DeptBadges } from "@/components/DeptPicker";
 import { ProjectFilter, type ProjectOption } from "@/components/ProjectFilter";
 import { Empty, ProgressBar, StatusChip } from "@/components/ui";
@@ -27,7 +27,8 @@ function DepartmentsPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"gantt" | "list">("gantt");
-  const [scale, setScale] = useState<"week" | "month">("month");
+  const [scale] = useState<"week" | "month">("month");
+  const zoom = useGanttZoom("npd-dept-gantt-ppd", 3.2);
   const [hideDone, setHideDone] = useState(true);
   const [depts, setDepts] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[] | null>(null); // 빈 배열 = 전체
@@ -235,13 +236,7 @@ function DepartmentsPage() {
           </label>
           <div className="ml-auto flex gap-2">
             {view === "gantt" && (
-              <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5">
-                {(["week", "month"] as const).map((s) => (
-                  <button key={s} onClick={() => setScale(s)} className={`rounded-md px-2.5 py-1 ${scale === s ? "bg-white font-medium shadow-sm" : "text-slate-500"}`}>
-                    {s === "week" ? "주" : "월"}
-                  </button>
-                ))}
-              </div>
+              <ZoomControl ppd={zoom.ppd} onChange={zoom.setPpd} onFit={zoom.fit} />
             )}
             <div className="inline-flex rounded-lg bg-black/[0.04] p-0.5">
               {(
@@ -288,6 +283,9 @@ function DepartmentsPage() {
             stages={ganttRows}
             projectStart={null}
             scale={scale}
+            ppd={zoom.ppd}
+            onPpd={zoom.setPpd}
+            fitKey={zoom.fitKey}
             canEdit={false}
             today={today}
             selectedId={null}
