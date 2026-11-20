@@ -39,7 +39,20 @@ const COPY_FIELDS: (keyof Stage)[] = [
   "plan_end",
 ];
 
-export function buildClip(root: Stage, project: Project, stages: Stage[], checks: StageCheck[] | null, links: StageLink[] | null): StageClip {
+export function buildClip(root: Stage | Stage[], project: Project, stages: Stage[], checks: StageCheck[] | null, links: StageLink[] | null): StageClip {
+  // 여러 개면: 고른 단계의 상위가 함께 골라졌으면 그 아래로 같이 복사되므로 뺌
+  const picked = Array.isArray(root) ? root : [root];
+  const ids = new Set(picked.map((s) => s.id));
+  const byId = new Map(stages.map((s) => [s.id, s]));
+  const hasPickedAncestor = (s: Stage) => {
+    let p = s.parent_id ? byId.get(s.parent_id) : undefined;
+    for (let i = 0; p && i < 50; i++) {
+      if (ids.has(p.id)) return true;
+      p = p.parent_id ? byId.get(p.parent_id) : undefined;
+    }
+    return false;
+  };
+  const roots = picked.filter((s) => !hasPickedAncestor(s));
   const kids: Record<string, Stage[]> = {};
   stages.forEach((s) => s.parent_id && (kids[s.parent_id] ??= []).push(s));
   const out: ClipStage[] = [];
@@ -57,17 +70,18 @@ export function buildClip(root: Stage, project: Project, stages: Stage[], checks
     });
     if (depth < 30) (kids[s.id] ?? []).sort((a, b) => a.sort_order - b.sort_order).forEach((k) => walk(k, s.id, depth + 1));
   };
-  walk(root, null, 0);
-  const extra = out.length - 1;
-  const plan = root.plan_start && root.plan_end ? ` · 계획 ${root.plan_start.slice(5).replace("-", "/")}~${root.plan_end.slice(5).replace("-", "/")}` : "";
+  roots.forEach((r) => walk(r, null, 0));
+  const first = roots[0];
+  const extra = out.length - roots.length;
+  const plan = roots.length === 1 && first.plan_start && first.plan_end ? ` · 계획 ${first.plan_start.slice(5).replace("-", "/")}~${first.plan_end.slice(5).replace("-", "/")}` : "";
   return {
     v: 1,
     at: Date.now(),
     projectId: project.id,
     projectName: project.name,
     projectStart: project.start_date,
-    rootName: root.name,
-    summary: `[NPD 단계] ${root.name}${extra ? ` (하위 ${extra}개)` : ""}${plan}`,
+    rootName: roots.length > 1 ? `${first.name} 외 ${roots.length - 1}개` : first.name,
+    summary: `[NPD 단계] ${first.name}${roots.length > 1 ? ` 외 ${roots.length - 1}개` : ""}${extra ? ` (하위 ${extra}개)` : ""}${plan}`,
     stages: out,
   };
 }

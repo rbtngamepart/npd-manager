@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
 import { Gantt, ZoomControl, useGanttZoom, type GroupAction, type TreeRef } from "@/components/Gantt";
@@ -93,7 +93,12 @@ function ProjectPage() {
   const zoom = useGanttZoom("npd-gantt-ppd", 6);
   const [selected, setSelected] = useState<string | null>(search.get("stage"));
   // 단계 패널을 닫거나 다른 단계로 바꿀 때 저장 안 한 입력이 있으면 확인
+  // 여러 단계 선택 (간트에서 Ctrl·Shift+클릭)
+  const [multi, setMulti] = useState<Set<string>>(new Set());
+  const anchorRef = useRef<string | null>(null);
   const selectStage = async (sid: string | null) => {
+    setMulti(new Set(sid ? [sid] : []));
+    if (sid) anchorRef.current = sid;
     if (sid === selected) return;
     if (!(await confirmLeave())) return;
     setSelected(sid);
@@ -285,10 +290,12 @@ function ProjectPage() {
     };
   }, []);
 
-  function copyStage(sid: string, viaKeyboard?: ClipboardEvent) {
-    const s = stages.find((x) => x.id === sid);
+  function copyStage(sid: string | string[], viaKeyboard?: ClipboardEvent) {
+    const ids = Array.isArray(sid) ? sid : [sid];
+    const picked = orderOf(ids).map((x) => stages.find((y) => y.id === x)).filter((x): x is Stage => !!x);
+    const s = picked[0];
     if (!s || !project) return;
-    const c = buildClip(s, project, stages, checks, links);
+    const c = buildClip(picked, project, stages, checks, links);
     saveClip(c);
     if (viaKeyboard?.clipboardData) {
       viaKeyboard.clipboardData.setData("text/plain", c.summary);
@@ -297,8 +304,9 @@ function ProjectPage() {
     } else {
       navigator.clipboard?.writeText(c.summary).catch(() => {});
     }
-    const extra = c.stages.length - 1;
-    toast(`'${s.name}'${extra ? ` (하위 ${extra}개 포함)` : ""} 복사함 · 붙여넣을 위치의 단계를 고르고 Ctrl+V`);
+    const roots = c.stages.filter((x) => !x.parent).length;
+    const extra = c.stages.length - roots;
+    toast(`'${c.rootName}'${extra ? ` (하위 ${extra}개 포함)` : ""} 복사함 · 붙여넣을 위치의 단계를 고르고 Ctrl+V`);
   }
 
   async function pasteStages(c: StageClip, after: string | null = selected) {
@@ -322,7 +330,7 @@ function ProjectPage() {
       const row: Record<string, unknown> = {
         ...f,
         project_id: id,
-        name: i === 0 ? uniqueName(String(f.name ?? "새 단계"), taken) : f.name ?? "새 단계",
+        name: !cs.parent ? uniqueName(String(f.name ?? "새 단계"), taken) : f.name ?? "새 단계",
         plan_start: mv(f.plan_start),
         plan_end: mv(f.plan_end),
         sort_order: base + i,
@@ -338,6 +346,7 @@ function ProjectPage() {
       }
       idMap[cs.key] = (data as Stage).id;
       inserted.push(data as Stage);
+      if (!cs.parent) taken.add((data as Stage).name);
     }
     if (!inserted.length) return;
     // 체크리스트(체크는 풀어서)·파일 링크
@@ -345,24 +354,43 @@ function ProjectPage() {
     const linkRows = c.stages.flatMap((cs) => (idMap[cs.key] ? cs.links.map((l, i) => ({ project_id: id, stage_id: idMap[cs.key], title: l.title, url: l.url, sort_order: i })) : []));
     if (checks && checkRows.length) await sb.from("stage_checks").insert(checkRows);
     if (links && linkRows.length) await sb.from("stage_links").insert(linkRows);
-    // 고른 단계 바로 아래로
-    const rootId = inserted[0].id;
+    // 고른 단계 바로 아래로 (여러 개면 차례대로 이어서)
+    const rootIds = c.stages.filter((cs) => !cs.parent && idMap[cs.key]).map((cs) => idMap[cs.key]);
+    const rootId = rootIds[0];
     if (target && groups) {
-      const plan = dropPlan({ kind: "stage", id: rootId }, { kind: "stage", id: target.id }, "after", [...stages, ...inserted], groups);
-      if (plan) await applyOrder(plan);
+      let list = [...stages, ...inserted];
+      let prev = target.id;
+      for (const rid of rootIds) {
+        const plan = dropPlan({ kind: "stage", id: rid }, { kind: "stage", id: prev }, "after", list, groups);
+        if (plan) {
+          await applyOrder(plan);
+          list = list.map((x) => {
+            const pch = plan.stages.find((y) => y.id === x.id);
+            return pch ? { ...x, ...pch } : x;
+          });
+        }
+        prev = rid;
+      }
     }
     await load();
-    setSelected(rootId);
-    const extra = inserted.length - 1;
-    toast(`'${inserted[0].name}'${extra ? ` (하위 ${extra}개 포함)` : ""} 붙여넣음${shiftDays ? ` · 날짜를 ${shiftDays > 0 ? "+" : ""}${shiftDays}일 옮김` : ""}`);
+    if (rootIds.length > 1) {
+      setSelected(null);
+      setMulti(new Set(rootIds));
+    } else {
+      setSelected(rootId);
+      setMulti(new Set([rootId]));
+    }
+    const extra = inserted.length - rootIds.length;
+    toast(`'${rootIds.length > 1 ? `${inserted[0].name} 외 ${rootIds.length - 1}개` : inserted[0].name}'${extra ? ` (하위 ${extra}개 포함)` : ""} 붙여넣음${shiftDays ? ` · 날짜를 ${shiftDays > 0 ? "+" : ""}${shiftDays}일 옮김` : ""}`);
   }
 
   // Ctrl+C / Ctrl+V (글을 고르거나 입력 중일 때는 원래대로 동작)
   useEffect(() => {
     const typing = (t: EventTarget | null) => !!(t instanceof Element && t.closest('input, textarea, select, [contenteditable="true"], .ProseMirror'));
     const onCopy = (e: ClipboardEvent) => {
-      if (!selected || typing(e.target) || typing(document.activeElement) || (window.getSelection()?.toString() ?? "")) return;
-      copyStage(selected, e);
+      if (typing(e.target) || typing(document.activeElement) || (window.getSelection()?.toString() ?? "")) return;
+      if (multi.size > 1) copyStage([...multi], e);
+      else if (selected) copyStage(selected, e);
     };
     const onPaste = (e: ClipboardEvent) => {
       if (!canEdit || typing(e.target) || typing(document.activeElement)) return;
@@ -383,6 +411,147 @@ function ProjectPage() {
       document.removeEventListener("paste", onPaste);
     };
   });
+
+  // ---- 여러 단계 선택 · 일괄 작업 ------------------------------------------
+  /** 간트에 보이는 순서 */
+  const visibleIds = (): string[] => (rows ? rows.filter((r) => r.kind === "stage").map((r) => (r as { stage: Stage }).stage.id) : shown.map((x) => x.id));
+  const orderOf = (ids: string[]) => {
+    const pos = new Map(visibleIds().map((x, i) => [x, i]));
+    const all = new Map(stages.map((x, i) => [x.id, 10000 + i]));
+    return [...ids].sort((a, b) => (pos.get(a) ?? all.get(a) ?? 0) - (pos.get(b) ?? all.get(b) ?? 0));
+  };
+  async function selectEx(sid: string, mods: { ctrl: boolean; shift: boolean }) {
+    let next: Set<string>;
+    const base = multi.size ? new Set(multi) : new Set(selected ? [selected] : []);
+    if (mods.shift) {
+      const order = visibleIds();
+      const from = anchorRef.current ?? selected ?? sid;
+      const a = order.indexOf(from);
+      const b = order.indexOf(sid);
+      const range = a < 0 || b < 0 ? [sid] : order.slice(Math.min(a, b), Math.max(a, b) + 1);
+      next = mods.ctrl ? new Set([...base, ...range]) : new Set(range);
+    } else {
+      next = base;
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      anchorRef.current = sid;
+    }
+    if (next.size > 1) {
+      if (selected && !(await confirmLeave())) return;
+      setSelected(null);
+    } else if (next.size === 1) {
+      const only = [...next][0];
+      if (only !== selected && !(await confirmLeave())) return;
+      setSelected(only);
+    } else setSelected(null);
+    setMulti(next);
+  }
+  const clearMulti = () => setMulti(selected ? new Set([selected]) : new Set());
+
+  async function moveMany(ids: string[], days: number) {
+    if (!canEdit || !days) return;
+    const todo = stages.filter((x) => ids.includes(x.id) && x.plan_start && x.plan_end && !x.skipped && !(x.cal_linked && x.cal_follow !== false));
+    if (!todo.length) return toast("옮길 수 있는 일정이 없습니다 (일정 없음·미사용·캘린더 연동 단계는 제외)");
+    const patch = (x: Stage): Partial<Stage> => ({
+      plan_start: addDays(x.plan_start!, days),
+      plan_end: addDays(x.plan_end!, days),
+      ...(x.expected_end && !x.actual_end ? { expected_end: addDays(x.expected_end, days) } : {}),
+    });
+    setStages((ss) => ss.map((x) => (todo.some((t) => t.id === x.id) ? { ...x, ...patch(x) } : x)));
+    const sb = supabase();
+    const res = await Promise.all(todo.map((x) => sb.from("stages").update(patch(x)).eq("id", x.id)));
+    const failed = res.filter((r) => r.error).length;
+    const skipped = ids.length - todo.length;
+    toast(`${todo.length - failed}개 단계를 ${days > 0 ? `${days}일 뒤로` : `${-days}일 앞으로`} 옮겼습니다${failed ? ` · ${failed}개 실패` : ""}${skipped ? ` · ${skipped}개 제외` : ""}`);
+    load();
+  }
+  async function patchMany(ids: string[], p: (x: Stage) => Partial<Stage> | null, msg: string) {
+    const sb = supabase();
+    const todo = stages.filter((x) => ids.includes(x.id)).map((x) => [x, p(x)] as const).filter(([, v]) => v) as [Stage, Partial<Stage>][];
+    setStages((ss) => ss.map((x) => {
+      const t = todo.find(([y]) => y.id === x.id);
+      return t ? { ...x, ...t[1] } : x;
+    }));
+    await Promise.all(todo.map(([x, v]) => sb.from("stages").update(v).eq("id", x.id)));
+    toast(msg.replace("{n}", String(todo.length)));
+    load();
+  }
+  async function deleteMany(ids: string[]) {
+    const list = stages.filter((x) => ids.includes(x.id));
+    if (!list.length || !confirm(`고른 단계 ${list.length}개를 삭제할까요?\n(고르지 않은 하위 단계는 한 칸 위로 올라갑니다)`)) return;
+    const sb = supabase();
+    const gone = new Set(list.map((x) => x.id));
+    for (const s0 of list) {
+      const kids = stages.filter((x) => x.parent_id === s0.id && !gone.has(x.id));
+      if (kids.length) await sb.from("stages").update({ parent_id: s0.parent_id ?? null, group_id: s0.parent_id ? effectiveGroup(s0, stages) : s0.group_id ?? null }).eq("parent_id", s0.id);
+    }
+    await sb.from("stages").delete().in("id", [...gone]);
+    setSelected(null);
+    setMulti(new Set());
+    toast(`단계 ${gone.size}개를 삭제했습니다`);
+    load();
+  }
+  function askShift(ids: string[]) {
+    const v = window.prompt("며칠 옮길까요? (뒤로는 +, 앞으로는 −. 예: 7, -3)", "7");
+    if (v === null) return;
+    const n = parseInt(v.replace(/[^\d-]/g, ""), 10);
+    if (Number.isFinite(n) && n) moveMany(ids, n);
+  }
+
+  // Esc: 여러 개 선택 풀기 · Ctrl+A: 보이는 단계 모두 고르기
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => !!(t instanceof Element && t.closest('input, textarea, select, [contenteditable="true"], .ProseMirror'));
+    const on = (e: KeyboardEvent) => {
+      if (tab !== "gantt" || typing(e.target) || typing(document.activeElement) || document.querySelector('[role="dialog"], [role="alertdialog"], .npd-ctx')) return;
+      if (e.key === "Escape" && multi.size > 1) {
+        e.preventDefault();
+        clearMulti();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && !e.shiftKey) {
+        const ids = visibleIds();
+        if (!ids.length) return;
+        e.preventDefault();
+        setSelected(null);
+        setMulti(new Set(ids));
+      }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  });
+
+  function multiMenu(e: React.MouseEvent) {
+    const ids = orderOf([...multi]);
+    const n = ids.length;
+    openMenu(e, [
+      { header: `단계 ${n}개 선택됨` },
+      { icon: "⧉", label: `${n}개 복사`, hint: "Ctrl+C", run: () => copyStage(ids) },
+      canEdit && project && { icon: "⧉", label: "바로 아래에 복제", run: () => pasteStages(buildClip(ids.map((x) => stages.find((y) => y.id === x)!).filter(Boolean), project, stages, checks, links), ids[ids.length - 1]) },
+      canEdit && "sep",
+      canEdit && {
+        icon: "↔",
+        label: "일정 함께 옮기기",
+        children: [
+          { label: "1주 앞으로", hint: "−7일", run: () => moveMany(ids, -7) },
+          { label: "1일 앞으로", hint: "−1일", run: () => moveMany(ids, -1) },
+          { label: "1일 뒤로", hint: "+1일", run: () => moveMany(ids, 1) },
+          { label: "1주 뒤로", hint: "+7일", run: () => moveMany(ids, 7) },
+          "sep",
+          { label: "날수 입력…", run: () => askShift(ids) },
+        ],
+      },
+      canEdit && { icon: "✓", label: "모두 오늘 완료 처리", run: () => patchMany(ids, (x) => (x.actual_end ? null : { actual_end: today, progress: 100, actual_start: x.actual_start ?? x.plan_start ?? today }), "{n}개 단계를 완료 처리했습니다") },
+      canEdit && {
+        icon: "🚦",
+        label: "PM 판단 모두",
+        children: ([[null, "자동 (판단 없음)"], ["green", "🟢 정상"], ["yellow", "🟡 주의"], ["red", "🔴 차질"]] as [Light | null, string][]).map(([v, label]) => ({ label, run: () => patchMany(ids, () => ({ pm_status: v }), `{n}개 단계 PM 판단을 바꿨습니다`) })),
+      },
+      canEdit && { label: "확인 필요 표시", run: () => patchMany(ids, () => ({ needs_check: true }), "{n}개 단계에 확인 필요를 표시했습니다") },
+      canEdit && { label: "확인 필요 해제", run: () => patchMany(ids, () => ({ needs_check: false }), "{n}개 단계의 확인 필요를 해제했습니다") },
+      "sep",
+      { icon: "✕", label: "선택 풀기", hint: "Esc", run: clearMulti },
+      canEdit && "sep",
+      canEdit && { icon: "🗑", label: `${n}개 삭제`, danger: true, run: () => deleteMany(ids) },
+    ]);
+  }
 
   // ---- 오른쪽 클릭 메뉴 -------------------------------------------------
   const openMenu = useContextMenu();
@@ -416,6 +585,7 @@ function ProjectPage() {
   const stageLink = (s: Stage) => `${window.location.origin}${s.ref_code ? `/s/${s.ref_code}` : `/projects/${id}?stage=${s.id}`}`;
 
   function stageMenu(e: React.MouseEvent, s: Stage) {
+    if (multi.size > 1 && multi.has(s.id)) return multiMenu(e);
     const light = (v: Light | null, label: string): CtxItem => ({ label, checked: (s.pm_status ?? null) === v, run: () => updateStage(s.id, { pm_status: v }) });
     openMenu(e, [
       { header: s.name },
@@ -1047,6 +1217,9 @@ function ProjectPage() {
                 today={today}
                 selectedId={selected}
                 onSelect={selectStage}
+                multi={multi}
+                onSelectEx={selectEx}
+                onMoveMany={moveMany}
                 onStageContext={stageMenu}
                 onGroupContext={groups ? groupMenu : undefined}
                 onBlankContext={blankMenu}
@@ -1344,6 +1517,45 @@ function ProjectPage() {
           onDeleteLog={deleteLog}
           onClose={() => selectStage(null)}
         />
+      )}
+
+      {tab === "gantt" && multi.size > 1 && (
+        <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-xl border border-black/10 bg-white px-2 py-1.5 text-xs shadow-xl [&_button]:whitespace-nowrap" data-tour="multi-bar">
+          <span className="px-2 font-semibold text-brand-600">{multi.size}개 선택</span>
+          <span className="h-4 w-px bg-black/10" />
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => copyStage([...multi])} title="복사 (Ctrl+C) · 붙여넣을 단계를 고르고 Ctrl+V">
+            ⧉ 복사
+          </button>
+          {canEdit && (
+            <>
+              <span className="h-4 w-px bg-black/10" />
+              <span className="pl-1 text-slate-400">일정</span>
+              {([-7, -1, 1, 7] as const).map((d) => (
+                <button key={d} className="btn-ghost px-1.5 py-1 text-xs tabular-nums" onClick={() => moveMany([...multi], d)} title={`고른 단계를 ${Math.abs(d)}일 ${d < 0 ? "앞으로" : "뒤로"}`}>
+                  {d < 0 ? `◀ ${-d}일` : `${d}일 ▶`}
+                </button>
+              ))}
+              <button className="btn-ghost px-1.5 py-1 text-xs" onClick={() => askShift([...multi])} title="며칠 옮길지 입력">
+                …
+              </button>
+              <span className="h-4 w-px bg-black/10" />
+              <button
+                className="btn-ghost px-2 py-1 text-xs"
+                onClick={() => patchMany([...multi], (x) => (x.actual_end ? null : { actual_end: today, progress: 100, actual_start: x.actual_start ?? x.plan_start ?? today }), "{n}개 단계를 완료 처리했습니다")}
+              >
+                ✓ 완료
+              </button>
+              <button className="btn-ghost px-2 py-1 text-xs text-rose-600" onClick={() => deleteMany([...multi])}>
+                🗑 삭제
+              </button>
+            </>
+          )}
+          <span className="h-4 w-px bg-black/10" />
+          <span className="hidden px-1 text-[11px] text-slate-400 2xl:inline">막대를 끌면 함께 이동 · 오른쪽 클릭 더보기</span>
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={clearMulti} title="선택 풀기 (Esc)">
+            ✕
+          </button>
+        </div>
       )}
 
       <ProjectEditModal

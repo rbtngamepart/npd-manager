@@ -144,6 +144,8 @@ type DragMode = "move" | "start" | "end" | "create";
 interface Drag {
   id: string;
   mode: DragMode;
+  /** 여러 개를 고른 채 끌면 함께 이동 */
+  group?: boolean;
   x0: number;
   start0: string;
   end0: string;
@@ -189,6 +191,9 @@ export function Gantt({
   ppd: ppdProp,
   onPpd,
   fitKey,
+  multi,
+  onSelectEx,
+  onMoveMany,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -232,6 +237,11 @@ export function Gantt({
   onPpd?: (n: number) => void;
   /** 바뀌면 모든 단계가 한 화면에 들어오게 맞춤 */
   fitKey?: number;
+  /** 여러 단계 선택 (Ctrl·Shift+클릭) */
+  multi?: Set<string>;
+  onSelectEx?: (id: string, mods: { ctrl: boolean; shift: boolean }) => void;
+  /** 고른 단계들을 같은 날수만큼 옮기기 */
+  onMoveMany?: (ids: string[], days: number) => void;
 }) {
   const [dragItem, setDragItem] = useState<TreeRef | null>(null);
   const [over, setOver] = useState<(TreeRef & { zone: DropZone }) | null>(null);
@@ -300,6 +310,11 @@ export function Gantt({
   }, [menu]);
   const ppd = ppdProp ?? scaleToPpd(scale); // px per day
   const tier = tierOf(ppd);
+  const many = !!multi && multi.size > 1;
+  const pick = (id: string, e?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
+    if (e && onSelectEx && (e.ctrlKey || e.metaKey || e.shiftKey)) onSelectEx(id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
+    else onSelect(id);
+  };
   const scroller = useRef<HTMLDivElement>(null);
   const [boxW, setBoxW] = useState(1200);
 
@@ -415,6 +430,7 @@ export function Gantt({
   const bandRef = useRef<{ x0: number; x1: number; id: number } | null>(null);
   const onBandDown = (e: React.PointerEvent) => {
     if (!e.shiftKey || e.button !== 0 || !onPpd) return;
+    if ((e.target as Element).closest?.("[data-stage-bar]")) return; // 막대 Shift+클릭은 여러 개 선택
     const el = scroller.current!;
     const r = el.getBoundingClientRect();
     const sx = e.clientX - r.left;
@@ -462,7 +478,7 @@ export function Gantt({
   const clipW = (u: Unit) => diffDays(u.start < rangeStart ? rangeStart : u.start, u.end > addDays(rangeEnd, 1) ? addDays(rangeEnd, 1) : u.end) * ppd;
 
   function begin(e: React.PointerEvent, s: Stage, mode: DragMode) {
-    if (!canEdit || e.button !== 0 || e.shiftKey) return;
+    if (!canEdit || e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     if (mode === "create") {
@@ -474,6 +490,7 @@ export function Gantt({
     setDrag({
       id: s.id,
       mode,
+      group: mode === "move" && many && multi!.has(s.id) && !!onMoveMany,
       x0: e.clientX,
       start0: s.plan_start!,
       end0: s.plan_end!,
@@ -510,7 +527,13 @@ export function Gantt({
     if (!d) return;
     setDrag(null);
     if (!d.moved) {
+      // 그냥 눌렀으면 그 단계만 고름 (여러 개 선택은 풀림)
       onSelect(d.id);
+      return;
+    }
+    if (d.group) {
+      const days = diffDays(d.start0, d.start);
+      if (days) onMoveMany?.([...multi!], days);
       return;
     }
     if (d.mode === "create") {
@@ -757,9 +780,12 @@ export function Gantt({
           const st = stageFinalStatus(s, today);
           const meta = st ? STATUS_META[st] : null;
           const isDrag = drag?.id === s.id;
-          const ps = isDrag ? drag.start : s.plan_start;
-          const pe = isDrag ? drag.end : s.plan_end;
-          const selected = selectedId === s.id;
+          const inMulti = !!multi?.has(s.id) && many;
+          // 함께 끌리는 단계
+          const groupDays = drag?.group && inMulti && !isDrag ? diffDays(drag.start0, drag.start) : 0;
+          const ps = isDrag ? drag.start : s.plan_start && groupDays ? addDays(s.plan_start, groupDays) : s.plan_start;
+          const pe = isDrag ? drag.end : s.plan_end && groupDays ? addDays(s.plan_end, groupDays) : s.plan_end;
+          const selected = selectedId === s.id || inMulti;
           const actualEnd = s.actual_end ?? (s.actual_start ? today : null);
           const dc = colorOf ? colorOf(s.department) : null;
           // 캘린더가 계획일을 정하는 단계는 끌어서 바꾸지 않음
@@ -790,7 +816,7 @@ export function Gantt({
               <div
                 role="button"
                 tabIndex={0}
-                onClick={() => onSelect(s.id)}
+                onClick={(e) => pick(s.id, e)}
                 onKeyDown={(e) => e.key === "Enter" && onSelect(s.id)}
                 className={`sticky left-0 z-10 flex shrink-0 cursor-pointer select-none items-center gap-2 border-r border-black/[0.08] px-3 text-left ${
                   selected ? "bg-brand-50" : "bg-white group-hover:bg-slate-50"
@@ -944,10 +970,11 @@ export function Gantt({
                 {ps && pe && (
                   <div
                     data-tour={s.id === firstBarId ? "gantt-bar" : undefined}
+                    data-stage-bar
                     className={`absolute top-[9px] h-[16px] overflow-hidden rounded-md ${
                       byDept ? "" : s.skipped ? "bg-slate-200" : "bg-slate-200/80"
                     } ${canEdit && !s.skipped && !locked ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${
-                      isDrag ? "ring-2 ring-brand-500" : selected ? "ring-2 ring-ink/70" : ""
+                      isDrag || groupDays ? "ring-2 ring-brand-500" : inMulti ? "ring-2 ring-brand-500/80" : selected ? "ring-2 ring-ink/70" : ""
                     }`}
                     style={{
                       left: x(ps),
@@ -959,7 +986,8 @@ export function Gantt({
                     onPointerUp={end}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!canEdit || s.skipped || locked) onSelect(s.id);
+                      if (e.ctrlKey || e.metaKey || e.shiftKey) pick(s.id, e);
+                      else if (!canEdit || s.skipped || locked) onSelect(s.id);
                     }}
                     title={`${s.name}\n계획 ${short(ps)} ~ ${short(pe)}${s.progress ? `\n진행률 ${s.progress}%` : ""}${locked ? "\n📅 구글 캘린더 일정을 따름" : ""}`}
                   >
