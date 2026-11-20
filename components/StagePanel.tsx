@@ -18,6 +18,7 @@ import { StageChecklist, StageDeps, StageExternal, StageLinks } from "./StageExt
 import { effectiveGroup, groupOptions, groupPath, stagePath } from "@/lib/groups";
 import { askSave, useUnsaved } from "@/lib/unsaved";
 import { extractRefs, newMentions, notifyMentions } from "@/lib/noteRefs";
+import { useContextMenu } from "./ContextMenu";
 import { Help, Tip } from "./Tip";
 import Link from "next/link";
 
@@ -834,6 +835,21 @@ export function StagePanel({
     </button>
   ));
   const logEditable = (l: StageLog) => l.kind !== "change" && !l.source;
+  const openMenu = useContextMenu();
+  function logMenu(e: React.MouseEvent, l: StageLog) {
+    if ((e.target as HTMLElement).closest("a")) return; // 링크는 브라우저 메뉴 그대로
+    const mine = l.author_id === myId;
+    openMenu(e, [
+      { header: `${KIND[l.kind].label} · ${relativeTime(l.created_at)}` },
+      { icon: "⤢", label: "크게 보기", run: () => setBig({ mode: "log", id: l.id }) },
+      canEdit && mine && logEditable(l) && v8 && { icon: "✏️", label: "수정", run: () => startEdit(l) },
+      { icon: "⧉", label: "글 복사", run: () => onCopy(l.body, "기록 내용을 복사했습니다") },
+      !!l.source && canEdit && onHideExt && "sep",
+      !!l.source && canEdit && onHideExt && { icon: "🗑", label: "수집 기록 지우기", danger: true, run: () => confirm("이 수집 기록을 지울까요?\n지라·컨플루언스 원문은 그대로이고, 이 기록은 다시 수집되지 않습니다.") && onHideExt([l.id]) },
+      canEdit && mine && logEditable(l) && "sep",
+      canEdit && mine && logEditable(l) && { icon: "🗑", label: "기록 지우기", danger: true, run: () => onDeleteLog(l.id) },
+    ]);
+  }
   const startEdit = (l: StageLog) => {
     setEditLog({ id: l.id, html: l.body_html ?? textToHtml(l.body) });
     setBig({ mode: "log", id: l.id });
@@ -1010,7 +1026,8 @@ export function StagePanel({
                   if (window.getSelection()?.toString()) return; // 글자를 드래그해 고르는 중
                   setBig({ mode: "log", id: l.id });
                 }}
-                title="눌러서 크게 보기"
+                title="눌러서 크게 보기 · 오른쪽 클릭 메뉴"
+                onContextMenu={(e) => logMenu(e, l)}
               >
                 {logHead(l, false)}
                 <div className="max-h-48 overflow-hidden">{logBody(l)}</div>

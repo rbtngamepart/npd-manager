@@ -3,6 +3,7 @@
 // 메모 폴더 트리: 폴더 안에 폴더, 메모를 끌어서 폴더로, 폴더를 끌어서 다른 폴더 안으로
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Note, NoteFolder, NoteKind } from "@/lib/types";
+import { useContextMenu } from "./ContextMenu";
 
 const KIND_ICON: Record<NoteKind, string> = { doc: "📄", mindmap: "🧠" };
 const OPEN_KEY = "npd-note-open-folders";
@@ -31,11 +32,14 @@ export interface NoteTreeProps {
   onDelete: (f: NoteFolder) => void;
   onToggleVis: (f: NoteFolder) => void;
   onNewNote: (kind: NoteKind, folderId: string | null) => void;
+  /** 메모 오른쪽 클릭 */
+  onNoteContext?: (e: React.MouseEvent, n: Note) => void;
 }
 
 export function NoteTree(p: NoteTreeProps) {
   const { folders, notes, filtering, selectedId, curFolder, draft } = p;
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const open_ = open;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
@@ -152,6 +156,35 @@ export function NoteTree(p: NoteTreeProps) {
     if (id) setRenaming(id);
   }
 
+  const openMenu = useContextMenu();
+  const folderItems = (f: NoteFolder) => {
+    const edit = canEdit(f);
+    return [
+      { label: "📄 이 폴더에 새 문서", run: () => p.onNewNote("doc", f.id) },
+      { label: "🧠 이 폴더에 새 마인드맵", run: () => p.onNewNote("mindmap", f.id) },
+      { label: "📁 하위 폴더 만들기", run: () => newFolder(f.id) },
+      ...(edit ? [{ label: "✏️ 이름 바꾸기", run: () => setRenaming(f.id) }] : []),
+      ...(f.owner_id === p.meId ? [{ label: f.visibility === "shared" ? "🔒 나만 보기로" : "👥 팀 공개로", run: () => p.onToggleVis(f) }] : []),
+      ...(edit && parentOf(f) ? [{ label: "⤴ 맨 위로 꺼내기", run: () => p.onMoveFolder(f.id, null) }] : []),
+      ...(canDelete(f) ? [{ label: "폴더 지우기", danger: true, run: () => p.onDelete(f) }] : []),
+    ];
+  };
+  const folderContext = (e: React.MouseEvent, f: NoteFolder) => {
+    const items = folderItems(f);
+    const open = filtering || open_.has(f.id);
+    openMenu(e, [
+      { header: f.name },
+      { icon: open ? "▾" : "▸", label: open ? "접기" : "펼치기", run: () => setFolderOpen(f.id, !open) },
+      "sep",
+      ...items.map((it, i) => {
+        // "📄 이 폴더에 새 문서" → 아이콘과 글자 나누기
+        const m = /^(\S+)\s(.+)$/u.exec(it.label);
+        const item = { icon: m && !/^[가-힣A-Za-z]/.test(m[1]) ? m[1] : undefined, label: m && !/^[가-힣A-Za-z]/.test(m[1]) ? m[2] : it.label, danger: "danger" in it ? it.danger : undefined, run: it.run };
+        return it.label === "폴더 지우기" && i > 0 ? [("sep" as const), { ...item, icon: "🗑" }] : [item];
+      }).flat(),
+    ]);
+  };
+
   const rows: React.ReactNode[] = [];
   const pad = (d: number) => 8 + d * 14;
 
@@ -169,6 +202,7 @@ export function NoteTree(p: NoteTreeProps) {
         }}
         onDragEnd={() => (setDrag(null), setOver(null))}
         onClick={() => p.onOpen(n.id)}
+        onContextMenu={p.onNoteContext ? (e) => p.onNoteContext!(e, n) : undefined}
         className={`group flex cursor-pointer items-center gap-1.5 border-l-2 py-1 pr-2 text-sm ${active ? "border-brand-500 bg-brand-500/[0.07]" : "border-transparent hover:bg-slate-50"} ${drag?.id === n.id ? "opacity-40" : ""}`}
         style={{ paddingLeft: pad(depth) + 18 }}
         title={view.title || "제목 없음"}
@@ -215,6 +249,7 @@ export function NoteTree(p: NoteTreeProps) {
           if (!filtering) setFolderOpen(f.id, !open.has(f.id));
         }}
         onDoubleClick={() => edit && setRenaming(f.id)}
+        onContextMenu={(e) => folderContext(e, f)}
         className={`group relative flex cursor-pointer select-none items-center gap-1 py-1 pr-1.5 text-sm ${over === f.id ? "bg-brand-500/15 ring-1 ring-inset ring-brand-500" : sel ? "bg-slate-100" : "hover:bg-slate-50"} ${drag?.id === f.id ? "opacity-40" : ""}`}
         style={{ paddingLeft: pad(depth) }}
       >
@@ -256,15 +291,7 @@ export function NoteTree(p: NoteTreeProps) {
         {menu === f.id && (
           <FolderMenu
             onClose={() => setMenu(null)}
-            items={[
-              { label: "📄 이 폴더에 새 문서", run: () => p.onNewNote("doc", f.id) },
-              { label: "🧠 이 폴더에 새 마인드맵", run: () => p.onNewNote("mindmap", f.id) },
-              { label: "📁 하위 폴더 만들기", run: () => newFolder(f.id) },
-              ...(edit ? [{ label: "✏️ 이름 바꾸기", run: () => setRenaming(f.id) }] : []),
-              ...(f.owner_id === p.meId ? [{ label: f.visibility === "shared" ? "🔒 나만 보기로" : "👥 팀 공개로", run: () => p.onToggleVis(f) }] : []),
-              ...(edit && parentOf(f) ? [{ label: "⤴ 맨 위로 꺼내기", run: () => p.onMoveFolder(f.id, null) }] : []),
-              ...(canDelete(f) ? [{ label: "폴더 지우기", danger: true, run: () => p.onDelete(f) }] : []),
-            ]}
+            items={folderItems(f)}
           />
         )}
       </div>

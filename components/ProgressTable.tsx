@@ -14,6 +14,7 @@ export function ProgressTable({
   today,
   canEdit,
   onSelect,
+  onRowContext,
   onQuick,
   dept,
   colorOf,
@@ -23,6 +24,8 @@ export function ProgressTable({
   today: string;
   canEdit: boolean;
   onSelect: (id: string) => void;
+  /** 오른쪽 클릭 메뉴 */
+  onRowContext?: (e: React.MouseEvent, s: Stage) => void;
   onQuick: (id: string, patch: Partial<Stage>) => void;
   dept?: string | string[] | null;
   colorOf?: DeptColorFn;
@@ -87,6 +90,7 @@ export function ProgressTable({
                   key={s.id}
                   className={`cursor-pointer hover:bg-slate-50/70 ${s.skipped ? "opacity-45" : ""}`}
                   onClick={() => onSelect(s.id)}
+                  onContextMenu={onRowContext ? (e) => onRowContext(e, s) : undefined}
                 >
                   <td className="td text-xs tabular-nums text-slate-400">{stages.indexOf(s) + 1}</td>
                   <td className="td font-medium">{s.name}</td>

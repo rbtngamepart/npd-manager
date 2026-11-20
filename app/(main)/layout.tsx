@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { CommandPalette } from "@/components/CommandPalette";
+import { ContextMenuProvider } from "@/components/ContextMenu";
 import { usePathname, useRouter } from "next/navigation";
 import { AppProvider, displayName, useApp } from "@/components/AppProvider";
 import { supabase } from "@/lib/supabase/client";
@@ -94,6 +95,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   ];
 
   return (
+    <ContextMenuProvider>
     <div className="min-h-screen">
       <CommandPalette pages={nav} />
       <header className="sticky top-0 z-30 border-b border-black/[0.06] bg-white/85 backdrop-blur">
@@ -152,6 +154,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6">{children}</main>
       <UnsavedGuard />
     </div>
+    </ContextMenuProvider>
   );
 }
 

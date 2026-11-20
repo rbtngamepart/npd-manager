@@ -41,7 +41,17 @@ function barTone(st: AutoStatus) {
   return STATUS_META[st ?? "waiting"] ?? STATUS_META.waiting;
 }
 
-export function PortfolioGantt({ rows, today }: { rows: PortfolioRow[]; today: string }) {
+export function PortfolioGantt({
+  rows,
+  today,
+  onProjectContext,
+  onStageContext,
+}: {
+  rows: PortfolioRow[];
+  today: string;
+  onProjectContext?: (e: React.MouseEvent, p: Project) => void;
+  onStageContext?: (e: React.MouseEvent, s: Stage) => void;
+}) {
   const [scale, setScaleState] = useState<Scale>("month");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement>(null);
@@ -137,7 +147,7 @@ export function PortfolioGantt({ rows, today }: { rows: PortfolioRow[]; today: s
     const fe = sum.actualEnd ?? sum.forecastEnd;
     const delay = pe && fe ? diffDays(pe, fe) : 0;
     bodyRows.push(
-      <div key={p.id} className={`group flex border-b border-black/[0.05] hover:bg-slate-50/70 ${p.archived ? "opacity-50" : ""}`} style={{ height: ROW }}>
+      <div key={p.id} className={`group flex border-b border-black/[0.05] hover:bg-slate-50/70 ${p.archived ? "opacity-50" : ""}`} style={{ height: ROW }} onContextMenu={onProjectContext ? (e) => onProjectContext(e, p) : undefined}>
         <div className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-black/[0.06] bg-white px-2 group-hover:bg-slate-50" style={{ width: LEFT }}>
           <button
             className={`grid h-6 w-6 shrink-0 place-items-center rounded text-[10px] text-slate-400 hover:bg-black/[0.06] ${top.length ? "" : "invisible"}`}
@@ -190,7 +200,7 @@ export function PortfolioGantt({ rows, today }: { rows: PortfolioRow[]; today: s
         const late = b ? (st.actual_end ?? st.expected_end) : null;
         const lateDays = b && late ? diffDays(b, late) : 0;
         bodyRows.push(
-          <div key={st.id} className="group flex border-b border-black/[0.03] bg-slate-50/30 hover:bg-slate-50" style={{ height: SUB }}>
+          <div key={st.id} className="group flex border-b border-black/[0.03] bg-slate-50/30 hover:bg-slate-50" style={{ height: SUB }} onContextMenu={onStageContext ? (e) => onStageContext(e, st) : undefined}>
             <div className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-black/[0.06] bg-slate-50 pl-10 pr-2" style={{ width: LEFT }}>
               <StatusDot status={stStatus} />
               <Link href={`/projects/${p.id}?stage=${st.id}`} className="min-w-0 flex-1 truncate text-xs text-slate-600 hover:text-brand-600" title={st.name}>

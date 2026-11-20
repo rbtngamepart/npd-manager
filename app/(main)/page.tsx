@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase/client";
 import { useApp } from "@/components/AppProvider";
 import { tourSeen, markTourSeen, useTour } from "@/components/Tour";
 import { PortfolioGantt } from "@/components/PortfolioGantt";
+import { copyText, useContextMenu } from "@/components/ContextMenu";
+import { useRouter } from "next/navigation";
 import { Empty, ProgressBar, StatusChip, StatusDot } from "@/components/ui";
 import { diffDays, full, short, today as todayFn } from "@/lib/dates";
 import { stageFinalStatus, summarize, type AutoStatus } from "@/lib/status";
@@ -15,6 +17,44 @@ const RANK: Record<string, number> = { red: 0, yellow: 1, green: 2, waiting: 3, 
 
 export default function Dashboard() {
   const { me } = useApp();
+  const router = useRouter();
+  const openCtx = useContextMenu();
+  const [note, setNote] = useState<string | null>(null);
+  const flash = (m: string) => {
+    setNote(m);
+    setTimeout(() => setNote(null), 2200);
+  };
+  function projectMenu(e: React.MouseEvent, p: Project) {
+    const url = `${window.location.origin}/projects/${p.id}`;
+    openCtx(e, [
+      { header: p.name },
+      { icon: "↗", label: "열기", run: () => router.push(`/projects/${p.id}`) },
+      { icon: "⧉", label: "새 탭에서 열기", run: () => window.open(url, "_blank") },
+      { icon: "🔗", label: "링크 복사", run: async () => (await copyText(url)) && flash("링크를 복사했습니다") },
+      { icon: "📝", label: "이 프로젝트 메모 만들기", run: () => router.push(`/notes?new=doc&project=${p.id}`) },
+      !!me?.is_game_part && "sep",
+      !!me?.is_game_part && {
+        icon: p.archived ? "📤" : "📦",
+        label: p.archived ? "보관 해제" : "보관하기",
+        run: async () => {
+          const { error } = await supabase().from("projects").update({ archived: !p.archived }).eq("id", p.id);
+          if (error) return flash(`실패: ${error.message}`);
+          setProjects((ps) => ps.map((x) => (x.id === p.id ? { ...x, archived: !p.archived } : x)));
+          flash(p.archived ? "보관을 풀었습니다" : "보관했습니다 (보관된 프로젝트 포함을 켜면 보여요)");
+        },
+      },
+    ]);
+  }
+  function stageMenu(e: React.MouseEvent, s: Stage) {
+    const url = `${window.location.origin}${s.ref_code ? `/s/${s.ref_code}` : `/projects/${s.project_id}?stage=${s.id}`}`;
+    openCtx(e, [
+      { header: s.name },
+      { icon: "↗", label: "단계 열기", run: () => router.push(`/projects/${s.project_id}?stage=${s.id}`) },
+      { icon: "⧉", label: "새 탭에서 열기", run: () => window.open(url, "_blank") },
+      { icon: "🔗", label: "단계 링크 복사", run: async () => (await copyText(url)) && flash("링크를 복사했습니다") },
+      !!s.ref_code && { icon: "#", label: "단계 코드 복사", hint: s.ref_code ?? "", run: async () => (await copyText(s.ref_code ?? "")) && flash(`${s.ref_code} 복사했습니다`) },
+    ]);
+  }
   const [projects, setProjects] = useState<Project[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [members, setMembers] = useState<{ project_id: string; user_id: string }[]>([]);
@@ -215,7 +255,7 @@ export default function Dashboard() {
               </Empty>
             </div>
           ) : view === "gantt" ? (
-            <PortfolioGantt rows={rows.map((r) => ({ ...r, stages: byProject[r.p.id] ?? [] }))} today={today} />
+            <PortfolioGantt rows={rows.map((r) => ({ ...r, stages: byProject[r.p.id] ?? [] }))} today={today} onProjectContext={projectMenu} onStageContext={stageMenu} />
           ) : (
             <div className="overflow-x-auto scroll-thin">
               <table className="w-full min-w-[980px]">
@@ -237,7 +277,7 @@ export default function Dashboard() {
                   {rows.map(({ p, sum }) => {
                     const delay = sum.planEnd && sum.forecastEnd ? diffDays(sum.planEnd, sum.forecastEnd) : 0;
                     return (
-                      <tr key={p.id} className={`hover:bg-slate-50/60 ${p.archived ? "opacity-50" : ""}`}>
+                      <tr key={p.id} className={`hover:bg-slate-50/60 ${p.archived ? "opacity-50" : ""}`} onContextMenu={(e) => projectMenu(e, p)}>
                         <td className="td">
                           <Link href={`/projects/${p.id}`} className="font-medium hover:text-brand-600">
                             {p.name}
@@ -301,7 +341,7 @@ export default function Dashboard() {
           ) : (
             <ul className="max-h-[560px] divide-y divide-black/[0.05] overflow-y-auto scroll-thin">
               {attention.slice(0, 40).map(({ s, st }) => (
-                <li key={s.id}>
+                <li key={s.id} onContextMenu={(e) => stageMenu(e, s)}>
                   <Link href={`/projects/${s.project_id}?stage=${s.id}`} className="block px-4 py-2.5 hover:bg-slate-50">
                     <div className="flex items-center gap-2">
                       <StatusDot status={st} />
@@ -326,6 +366,7 @@ export default function Dashboard() {
           )}
         </aside>
       </div>
+      {note && <div className="fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-xl">{note}</div>}
     </div>
   );
 }

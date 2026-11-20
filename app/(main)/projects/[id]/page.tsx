@@ -27,6 +27,7 @@ import { KIND } from "@/components/StagePanel";
 import { LabelChip } from "@/components/Labels";
 import { confirmLeave } from "@/lib/unsaved";
 import { Help, Tip } from "@/components/Tip";
+import { copyText, useContextMenu, type CtxItem } from "@/components/ContextMenu";
 import { runCalendarSync, summaryText } from "@/lib/calendar/client";
 
 type Tab = "gantt" | "pm" | "logs" | "settings";
@@ -378,6 +379,95 @@ function ProjectPage() {
       document.removeEventListener("paste", onPaste);
     };
   });
+
+  // ---- 오른쪽 클릭 메뉴 -------------------------------------------------
+  const openMenu = useContextMenu();
+
+  /** 고른 단계 바로 아래(after) 또는 그 안(child)에 새 단계 */
+  async function addStageNear(sid: string, where: "after" | "child") {
+    if (!(await confirmLeave())) return;
+    const t = stages.find((x) => x.id === sid);
+    if (!t) return;
+    const grp = groups ? effectiveGroup(t, stages) : null;
+    const row: Record<string, unknown> = {
+      project_id: id,
+      name: "새 단계",
+      department: t.department ?? me?.department ?? "게임파트",
+      sort_order: stages.reduce((m, x) => Math.max(m, x.sort_order), 0) + 1000,
+    };
+    if (groups) row.group_id = grp;
+    if (where === "child") row.parent_id = t.id;
+    else if (t.parent_id) row.parent_id = t.parent_id;
+    const { data, error } = await supabase().from("stages").insert(row).select().single();
+    if (error || !data) return toast(error?.message ?? "추가하지 못했습니다");
+    if (groups) {
+      const plan = dropPlan({ kind: "stage", id: (data as Stage).id }, { kind: "stage", id: t.id }, where === "child" ? "inside" : "after", [...stages, data as Stage], groups);
+      if (plan) await applyOrder(plan);
+      if (where === "child" && collapsed.has(t.id)) toggleGroup(t.id);
+    }
+    await load();
+    setSelected((data as Stage).id);
+  }
+
+  const stageLink = (s: Stage) => `${window.location.origin}${s.ref_code ? `/s/${s.ref_code}` : `/projects/${id}?stage=${s.id}`}`;
+
+  function stageMenu(e: React.MouseEvent, s: Stage) {
+    const light = (v: Light | null, label: string): CtxItem => ({ label, checked: (s.pm_status ?? null) === v, run: () => updateStage(s.id, { pm_status: v }) });
+    openMenu(e, [
+      { header: s.name },
+      { icon: "↗", label: "상세 열기", run: () => selectStage(s.id) },
+      "sep",
+      { icon: "⧉", label: "복사", hint: "Ctrl+C", run: () => copyStage(s.id) },
+      canEdit && clip && { icon: "📋", label: "이 단계 아래에 붙여넣기", hint: "Ctrl+V", run: () => pasteStages(clip, s.id) },
+      canEdit && project && { icon: "⧉", label: "바로 아래에 복제", run: () => pasteStages(buildClip(s, project, stages, checks, links), s.id) },
+      "sep",
+      canEdit && { icon: "＋", label: "아래에 새 단계", run: () => addStageNear(s.id, "after") },
+      canEdit && groups && { icon: "↳", label: "하위 단계 추가", run: () => addStageNear(s.id, "child") },
+      canEdit && { icon: "↑", label: "위로 옮기기", run: () => moveStage(s.id, -1) },
+      canEdit && { icon: "↓", label: "아래로 옮기기", run: () => moveStage(s.id, 1) },
+      "sep",
+      canEdit && !s.actual_end && { icon: "✓", label: "오늘 완료 처리", run: () => updateStage(s.id, { actual_end: today, progress: 100, actual_start: s.actual_start ?? s.plan_start ?? today }) },
+      canEdit && !!s.actual_end && { icon: "↺", label: "완료 취소", run: () => updateStage(s.id, { actual_end: null }) },
+      canEdit && {
+        icon: "🚦",
+        label: "PM 판단",
+        children: [light(null, "자동 (판단 없음)"), light("green", "🟢 정상"), light("yellow", "🟡 주의"), light("red", "🔴 차질")],
+      },
+      canEdit && { label: "확인 필요", checked: s.needs_check, run: () => updateStage(s.id, { needs_check: !s.needs_check }) },
+      canEdit && { label: "이번 프로젝트에서 미사용", checked: s.skipped, run: () => updateStage(s.id, { skipped: !s.skipped }) },
+      "sep",
+      !!s.ref_code && { icon: "#", label: "단계 코드 복사", hint: s.ref_code ?? "", run: async () => (await copyText(s.ref_code ?? "")) && toast(`${s.ref_code} 복사했습니다`) },
+      { icon: "🔗", label: "단계 링크 복사", run: async () => (await copyText(stageLink(s))) && toast("링크를 복사했습니다") },
+      { icon: "📝", label: "이 단계 메모 만들기", run: () => router.push(`/notes?new=doc&project=${id}&stage=${s.id}`) },
+      canEdit && "sep",
+      canEdit && { icon: "🗑", label: "단계 삭제", danger: true, run: () => deleteStage(s.id) },
+    ]);
+  }
+
+  function groupMenu(e: React.MouseEvent, g: StageGroup) {
+    openMenu(e, [
+      { header: g.name },
+      { icon: collapsed.has(g.id) ? "▸" : "▾", label: collapsed.has(g.id) ? "펼치기" : "접기", run: () => toggleGroup(g.id) },
+      canEdit && "sep",
+      canEdit && { icon: "＋", label: "이 그룹에 단계 추가", run: () => groupAction(g, "stage") },
+      canEdit && { icon: "📁", label: "하위 그룹 추가", run: () => groupAction(g, "sub") },
+      canEdit && { icon: "✏️", label: "이름 바꾸기", run: () => groupAction(g, "rename") },
+      canEdit && { icon: "↑", label: "위로", run: () => groupAction(g, "up") },
+      canEdit && { icon: "↓", label: "아래로", run: () => groupAction(g, "down") },
+      canEdit && "sep",
+      canEdit && { icon: "🗑", label: "그룹 지우기", danger: true, run: () => groupAction(g, "delete") },
+    ]);
+  }
+
+  function blankMenu(e: React.MouseEvent) {
+    if (!canEdit) return;
+    openMenu(e, [
+      { icon: "＋", label: "새 단계", run: () => addStage(null) },
+      groups && { icon: "📁", label: "새 그룹", run: () => addGroup(null) },
+      clip && "sep",
+      clip && { icon: "📋", label: "맨 아래에 붙여넣기", hint: clip.rootName, run: () => pasteStages(clip, null) },
+    ]);
+  }
 
   async function deleteStage(sid: string) {
     const s = stages.find((x) => x.id === sid);
@@ -925,6 +1015,9 @@ function ProjectPage() {
                 today={today}
                 selectedId={selected}
                 onSelect={selectStage}
+                onStageContext={stageMenu}
+                onGroupContext={groups ? groupMenu : undefined}
+                onBlankContext={blankMenu}
                 onDates={(sid, start, end) => updateStage(sid, { plan_start: start, plan_end: end })}
                 rows={rows}
                 onToggleGroup={toggleGroup}
@@ -1051,6 +1144,7 @@ function ProjectPage() {
             today={today}
             canEdit={canEdit}
             onSelect={selectStage}
+            onRowContext={stageMenu}
             onQuick={(sid, patch) => updateStage(sid, patch)}
           />
         )}

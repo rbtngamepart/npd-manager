@@ -56,6 +56,9 @@ export function Gantt({
   onTreeDrop,
   onDragBlocked,
   headerActions,
+  onStageContext,
+  onGroupContext,
+  onBlankContext,
 }: {
   stages: Stage[];
   projectStart: string | null;
@@ -90,6 +93,10 @@ export function Gantt({
   onDragBlocked?: () => void;
   /** '단계' 머리 칸 오른쪽 버튼 (패널을 펼쳐도 보이는 자리) */
   headerActions?: React.ReactNode;
+  /** 오른쪽 클릭 메뉴 */
+  onStageContext?: (e: React.MouseEvent, s: Stage) => void;
+  onGroupContext?: (e: React.MouseEvent, g: StageGroup) => void;
+  onBlankContext?: (e: React.MouseEvent) => void;
 }) {
   const [dragItem, setDragItem] = useState<TreeRef | null>(null);
   const [over, setOver] = useState<(TreeRef & { zone: DropZone }) | null>(null);
@@ -340,6 +347,7 @@ export function Gantt({
       ref={scroller}
       className="scroll-thin relative max-h-[calc(100vh-250px)] min-h-[300px] overflow-auto"
       style={{ userSelect: drag ? "none" : undefined }}
+      onContextMenu={onBlankContext}
     >
       <div style={{ width: LEFT + width }} className="relative">
         {/* 헤더 */}
@@ -432,6 +440,7 @@ export function Gantt({
                 className={`group/g relative flex border-b border-black/[0.06] bg-slate-50 ${menu === g.id ? "z-30" : "z-10"} ${dropCls({ kind: "group", id: g.id })}`}
                 style={{ height: GROUP_ROW }}
                 {...dropProps({ kind: "group", id: g.id })}
+                onContextMenu={onGroupContext ? (e) => onGroupContext(e, g) : undefined}
               >
                 <div
                   className={`sticky left-0 z-10 flex shrink-0 select-none items-center gap-1.5 border-r border-black/[0.08] bg-slate-50 pr-2 text-xs font-semibold text-slate-700 ${dnd ? "cursor-grab active:cursor-grabbing" : ""} ${dragItem?.id === g.id ? "opacity-40" : ""}`}
@@ -535,6 +544,7 @@ export function Gantt({
               className={`group relative z-10 flex border-b border-black/[0.05] ${selected ? "bg-brand-50/50" : "hover:bg-slate-50/60"} ${dropCls({ kind: "stage", id: s.id })}`}
               style={{ height: ROW }}
               {...dropProps({ kind: "stage", id: s.id })}
+              onContextMenu={onStageContext ? (e) => onStageContext(e, s) : undefined}
             >
               <div
                 role="button"

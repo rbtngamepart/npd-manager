@@ -14,6 +14,7 @@ import { useUnsaved } from "@/lib/unsaved";
 import { relativeTime, today as todayFn } from "@/lib/dates";
 import type { Note, NoteCategory, NoteFolder, NoteKind, Project, Stage } from "@/lib/types";
 import { NoteTree } from "@/components/NoteTree";
+import { copyText, useContextMenu, type CtxItem } from "@/components/ContextMenu";
 import { Backlinks, COVERS, CoverPicker, IconPicker, NewNoteMenu, Toc, VersionsModal, type NewChoice } from "@/components/NoteExtras";
 import { extractRefs, newMentions, notifyMentions } from "@/lib/noteRefs";
 import { exportMarkdown, exportMarkdownText, exportPrint, exportWord } from "@/lib/exportNote";
@@ -473,6 +474,69 @@ function Notes() {
     if (error || !data?.length) return alert("지우지 못했습니다. 템플릿을 만든 사람이나 관리자만 지울 수 있어요.");
     setNotes((ns) => ns.filter((x) => x.id !== t.id));
   }
+  // ---- 오른쪽 클릭 메뉴 -------------------------------------------------
+  const openMenu = useContextMenu();
+  const canEditNote = (n: Note) => !!me && !n.deleted_at && (n.author_id === me.id || (n.visibility === "shared" && !!me.is_game_part));
+  async function duplicateNote(n: Note) {
+    if (dirtyRef.current) await save();
+    const { data: full } = await supabase().from("notes").select("*").eq("id", n.id).maybeSingle();
+    const f = full as Note | null;
+    if (!f) return;
+    const { id: _id, created_at: _c, updated_at: _u, author_id: _a, updated_by: _b, deleted_at: _d, ...rest } = f;
+    void _id; void _c; void _u; void _a; void _b; void _d;
+    const { data, error } = await supabase()
+      .from("notes")
+      .insert({ ...rest, title: `${f.title || "제목 없음"} (사본)`, is_template: false })
+      .select(listCols())
+      .single();
+    if (error || !data) return alert("복제하지 못했습니다.\n" + (error?.message ?? ""));
+    setNotes((ns) => [data as unknown as Note, ...ns]);
+    go((data as unknown as Note).id);
+    say("사본을 만들었습니다");
+  }
+  async function trashNote(n: Note) {
+    if (draftRef.current?.id === n.id) return remove();
+    const { data, error } = await supabase().from("notes").update({ deleted_at: new Date().toISOString() }).eq("id", n.id).select("id");
+    if (error || !data?.length) return alert("휴지통으로 옮기지 못했습니다. 권한을 확인하세요.");
+    setNotes((ns) => ns.map((x) => (x.id === n.id ? { ...x, deleted_at: new Date().toISOString() } : x)));
+    say(`'${n.title || "제목 없음"}'을(를) 휴지통으로 옮겼습니다`, { label: "되돌리기", run: () => restore(n.id) });
+  }
+  function noteMenu(e: React.MouseEvent, n: Note) {
+    const url = `${window.location.origin}/notes?id=${n.id}`;
+    const edit = canEditNote(n);
+    if (n.deleted_at) {
+      openMenu(e, [
+        { header: n.title || "제목 없음" },
+        { icon: "↗", label: "내용 보기", run: () => go(n.id) },
+        { icon: "↺", label: "되살리기", run: () => restore(n.id) },
+        (n.author_id === me?.id || !!me?.is_admin) && { icon: "🗑", label: "완전 삭제", danger: true, run: () => destroy(n) },
+      ]);
+      return;
+    }
+    const moveTo: CtxItem[] = [
+      { label: "— 폴더 밖", checked: !n.folder_id, run: () => moveNote(n.id, null) },
+      ...folderOptions.map(({ f, depth }) => ({ label: `${"\u3000".repeat(depth)}📁 ${f.name}`, checked: n.folder_id === f.id, run: () => moveNote(n.id, f.id) })),
+    ];
+    openMenu(e, [
+      { header: n.title || "제목 없음" },
+      { icon: "↗", label: "열기", run: () => go(n.id) },
+      { icon: "⧉", label: "새 탭에서 열기", run: () => window.open(url, "_blank") },
+      { icon: "🔗", label: "링크 복사", run: async () => (await copyText(url)) && say("링크를 복사했습니다") },
+      plus && { icon: favs.has(n.id) ? "★" : "☆", label: favs.has(n.id) ? "즐겨찾기에서 빼기" : "즐겨찾기", run: () => toggleFav(n.id) },
+      "sep",
+      { icon: "⧉", label: "복제 (사본 만들기)", run: () => duplicateNote(n) },
+      edit && !noFolders && { icon: "📁", label: "폴더로 옮기기", children: moveTo },
+      edit && n.author_id === me?.id && { icon: n.visibility === "shared" ? "🔒" : "👥", label: n.visibility === "shared" ? "나만 보기로" : "팀 공개로", run: async () => {
+        if (draftRef.current?.id === n.id) return change({ visibility: n.visibility === "shared" ? "private" : "shared" });
+        const v = n.visibility === "shared" ? "private" : "shared";
+        const { error } = await supabase().from("notes").update({ visibility: v }).eq("id", n.id);
+        if (!error) setNotes((ns) => ns.map((x) => (x.id === n.id ? { ...x, visibility: v } : x)));
+      } },
+      (plus ? edit : n.author_id === me?.id || !!me?.is_admin) && "sep",
+      (plus ? edit : n.author_id === me?.id || !!me?.is_admin) && { icon: "🗑", label: plus ? "휴지통으로" : "지우기", danger: true, run: () => (plus ? trashNote(n) : draftRef.current?.id === n.id ? remove() : destroy(n)) },
+    ]);
+  }
+
   function pickNew(c: NewChoice) {
     if ("template" in c) create(c.template.kind, undefined, curFolder, { template: c.template });
     else create(c.kind, undefined, curFolder, { preset: c.preset });
@@ -694,6 +758,7 @@ function Notes() {
                         <button
                           key={n.id}
                           onClick={() => go(n.id)}
+                          onContextMenu={(e) => noteMenu(e, n)}
                           className={`flex w-full items-center gap-1.5 border-l-2 py-1 pl-5 pr-3 text-left text-sm ${n.id === selectedId ? "border-brand-500 bg-brand-500/[0.07] font-medium" : "border-transparent hover:bg-slate-50"}`}
                         >
                           <span className="text-xs">{n.icon || KIND_ICON[n.kind]}</span>
@@ -718,7 +783,7 @@ function Notes() {
                   trash.map((n) => {
                     const left = Math.max(0, 30 - Math.floor((Date.now() - new Date(n.deleted_at as string).getTime()) / 86400000));
                     return (
-                      <div key={n.id} className={`group flex items-center gap-1.5 px-3 py-1.5 text-sm ${n.id === selectedId ? "bg-brand-500/[0.07]" : "hover:bg-slate-50"}`}>
+                      <div key={n.id} className={`group flex items-center gap-1.5 px-3 py-1.5 text-sm ${n.id === selectedId ? "bg-brand-500/[0.07]" : "hover:bg-slate-50"}`} onContextMenu={(e) => noteMenu(e, n)}>
                         <button className="min-w-0 flex-1 truncate text-left" onClick={() => go(n.id)} title="눌러서 내용 보기">
                           <span className="mr-1 text-xs">{n.icon || KIND_ICON[n.kind]}</span>
                           {n.title || "제목 없음"}
@@ -759,6 +824,7 @@ function Notes() {
                 onDelete={deleteFolder}
                 onToggleVis={(f) => updateFolder(f.id, { visibility: f.visibility === "shared" ? "private" : "shared" })}
                 onNewNote={(kind, folderId) => create(kind, undefined, folderId)}
+                onNoteContext={noteMenu}
               />
             ) : shown.length === 0 ? (
               <p className="p-6 text-center text-sm text-slate-400">{live.length ? "조건에 맞는 메모가 없습니다." : "아직 메모가 없습니다. 위에서 새로 만들어 보세요."}</p>
@@ -776,6 +842,7 @@ function Notes() {
                         <li key={n.id}>
                           <button
                             onClick={() => go(n.id)}
+                            onContextMenu={(e) => noteMenu(e, n)}
                             className={`block w-full border-l-2 px-3 py-2 text-left ${active ? "border-brand-500 bg-brand-500/[0.06]" : "border-transparent hover:bg-slate-50"}`}
                           >
                             <div className="flex items-center gap-1.5">
