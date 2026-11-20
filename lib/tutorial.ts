@@ -234,6 +234,13 @@ export const CHAPTERS: Chapter[] = [
       },
       {
         route: "project",
+        target: "add-stage",
+        role: "editor",
+        title: "단계 복사 · 붙여넣기",
+        body: "비슷한 단계를 또 만들 때는 복사하세요.\n· 단계를 고르고 Ctrl+C → 붙여넣을 자리의 단계를 고르고 Ctrl+V 하면 그 바로 아래에 생겨요 (아무것도 안 고르면 맨 아래)\n· 하위 단계·체크리스트·파일 링크·부서·설명·계획 날짜까지 함께 복사되고, 실적·진행률·이슈는 비워집니다\n· 다른 프로젝트에서 Ctrl+V 하면 프로젝트 시작일 차이만큼 날짜가 옮겨져요\n· 단계 상세 위쪽 [⧉ 복사] [⧉+ 복제] 버튼, 간트 위 [📋 붙여넣기] 버튼으로도 돼요",
+      },
+      {
+        route: "project",
         target: "add-group",
         role: "editor",
         title: "그룹 · 하위 단계 (폴더처럼)",

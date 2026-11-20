@@ -159,6 +159,8 @@ export function StagePanel({
   deps,
   onSave,
   onDelete,
+  onCopyStage,
+  onDuplicate,
   onMove,
   onAddLog,
   onUpdateLog,
@@ -193,6 +195,9 @@ export function StagePanel({
   deps: StageDep[] | null;
   onSave: (patch: Partial<Stage>) => Promise<void>;
   onDelete: () => void;
+  /** 단계 복사 (Ctrl+C와 같음) · 바로 아래에 복제 */
+  onCopyStage?: () => void;
+  onDuplicate?: () => void;
   onMove: (dir: -1 | 1) => void;
   onAddLog: (kind: LogKind, body: string, html: string | null) => Promise<void>;
   onUpdateLog: (id: string, body: string, html: string) => Promise<void>;
@@ -1053,6 +1058,20 @@ export function StagePanel({
           </div>
         )}
         {cols === 1 && isWide && <span className="text-[11px] text-slate-400">더 넓히면 2열로 보여요</span>}
+        {onCopyStage && (
+          <Tip content="이 단계를 복사 (하위 단계·체크리스트·링크 포함). 다른 단계를 고르고 Ctrl+V 하면 그 아래에, 다른 프로젝트에서도 붙여넣을 수 있어요. 목록에서 단계를 고른 채 Ctrl+C 해도 돼요.">
+            <button className="btn-ghost px-1.5 py-0.5 text-xs" onClick={onCopyStage} data-tour="sp-copy">
+              ⧉ 복사
+            </button>
+          </Tip>
+        )}
+        {canEdit && onDuplicate && (
+          <Tip content="이 단계를 바로 아래에 하나 더 만들기 (계획·부서·설명·체크리스트 포함, 실적·진행률은 비움)">
+            <button className="btn-ghost px-1.5 py-0.5 text-xs" onClick={onDuplicate}>
+              ⧉+ 복제
+            </button>
+          </Tip>
+        )}
         <button
           className="btn-ghost ml-auto px-2 py-0.5 text-xs"
           onClick={() => setMode(isWide ? "normal" : "wide")}

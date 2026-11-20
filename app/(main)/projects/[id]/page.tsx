@@ -11,7 +11,8 @@ import { ProgressTable } from "@/components/ProgressTable";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ProjectSettings } from "@/components/ProjectSettings";
 import { Empty, Modal, PmPicker, ProgressBar, StatusChip, Toast } from "@/components/ui";
-import { diffDays, full, relativeTime, short, today as todayFn, weekNumber } from "@/lib/dates";
+import { addDays, diffDays, full, relativeTime, short, today as todayFn, weekNumber } from "@/lib/dates";
+import { CLIP_EVENT, CLIP_MIME, buildClip, clearClip, loadClip, parseClip, saveClip, uniqueName, type StageClip } from "@/lib/stageClipboard";
 import { stageAutoStatus, stageFinalStatus, summarize } from "@/lib/status";
 import { toTemplate } from "@/lib/templates";
 import { useTourEvents } from "@/components/Tour";
@@ -265,6 +266,118 @@ function ProjectPage() {
     await load();
     setSelected(data.id);
   }
+
+  // ---- 단계 복사·붙여넣기 ------------------------------------------------
+  const [clip, setClip] = useState<StageClip | null>(null);
+  useEffect(() => {
+    const sync = () => setClip(loadClip());
+    sync();
+    window.addEventListener(CLIP_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(CLIP_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  function copyStage(sid: string, viaKeyboard?: ClipboardEvent) {
+    const s = stages.find((x) => x.id === sid);
+    if (!s || !project) return;
+    const c = buildClip(s, project, stages, checks, links);
+    saveClip(c);
+    if (viaKeyboard?.clipboardData) {
+      viaKeyboard.clipboardData.setData("text/plain", c.summary);
+      viaKeyboard.clipboardData.setData(CLIP_MIME, JSON.stringify(c));
+      viaKeyboard.preventDefault();
+    } else {
+      navigator.clipboard?.writeText(c.summary).catch(() => {});
+    }
+    const extra = c.stages.length - 1;
+    toast(`'${s.name}'${extra ? ` (하위 ${extra}개 포함)` : ""} 복사함 · 붙여넣을 위치의 단계를 고르고 Ctrl+V`);
+  }
+
+  async function pasteStages(c: StageClip, after: string | null = selected) {
+    if (!canEdit || !project) return;
+    if (!(await confirmLeave())) return;
+    const sb = supabase();
+    const target = after ? stages.find((x) => x.id === after) ?? null : null;
+    const same = c.projectId === id;
+    // 다른 프로젝트면 프로젝트 시작일 차이만큼 계획 날짜를 옮김
+    const shiftDays = !same && c.projectStart && project.start_date ? diffDays(c.projectStart, project.start_date) : 0;
+    const mv = (d: unknown) => (typeof d === "string" && d ? (shiftDays ? addDays(d, shiftDays) : d) : null);
+    const rootParent = target?.parent_id ?? null;
+    const rootGroup = target && groups ? effectiveGroup(target, stages) : null;
+    const base = groups ? nextOrder(rootGroup, stages, groups) + 1000 : stages.reduce((m, x) => Math.max(m, x.sort_order), 0) + 1000;
+    const taken = new Set(stages.map((x) => x.name));
+    const idMap: Record<string, string> = {};
+    const inserted: Stage[] = [];
+    for (let i = 0; i < c.stages.length; i++) {
+      const cs = c.stages[i];
+      const f = { ...cs.fields } as Partial<Stage>;
+      const row: Record<string, unknown> = {
+        ...f,
+        project_id: id,
+        name: i === 0 ? uniqueName(String(f.name ?? "새 단계"), taken) : f.name ?? "새 단계",
+        plan_start: mv(f.plan_start),
+        plan_end: mv(f.plan_end),
+        sort_order: base + i,
+      };
+      if (groups) row.group_id = rootGroup;
+      if (cs.parent) row.parent_id = idMap[cs.parent] ?? null;
+      else if (rootParent) row.parent_id = rootParent;
+      if (!groups) delete row.label_ids;
+      const { data, error } = await sb.from("stages").insert(row).select().single();
+      if (error || !data) {
+        toast(`붙여넣기 실패: ${error?.message ?? ""}`);
+        break;
+      }
+      idMap[cs.key] = (data as Stage).id;
+      inserted.push(data as Stage);
+    }
+    if (!inserted.length) return;
+    // 체크리스트(체크는 풀어서)·파일 링크
+    const checkRows = c.stages.flatMap((cs) => (idMap[cs.key] ? cs.checks.map((body, i) => ({ project_id: id, stage_id: idMap[cs.key], body, done: false, sort_order: i })) : []));
+    const linkRows = c.stages.flatMap((cs) => (idMap[cs.key] ? cs.links.map((l, i) => ({ project_id: id, stage_id: idMap[cs.key], title: l.title, url: l.url, sort_order: i })) : []));
+    if (checks && checkRows.length) await sb.from("stage_checks").insert(checkRows);
+    if (links && linkRows.length) await sb.from("stage_links").insert(linkRows);
+    // 고른 단계 바로 아래로
+    const rootId = inserted[0].id;
+    if (target && groups) {
+      const plan = dropPlan({ kind: "stage", id: rootId }, { kind: "stage", id: target.id }, "after", [...stages, ...inserted], groups);
+      if (plan) await applyOrder(plan);
+    }
+    await load();
+    setSelected(rootId);
+    const extra = inserted.length - 1;
+    toast(`'${inserted[0].name}'${extra ? ` (하위 ${extra}개 포함)` : ""} 붙여넣음${shiftDays ? ` · 날짜를 ${shiftDays > 0 ? "+" : ""}${shiftDays}일 옮김` : ""}`);
+  }
+
+  // Ctrl+C / Ctrl+V (글을 고르거나 입력 중일 때는 원래대로 동작)
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => !!(t instanceof Element && t.closest('input, textarea, select, [contenteditable="true"], .ProseMirror'));
+    const onCopy = (e: ClipboardEvent) => {
+      if (!selected || typing(e.target) || typing(document.activeElement) || (window.getSelection()?.toString() ?? "")) return;
+      copyStage(selected, e);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (!canEdit || typing(e.target) || typing(document.activeElement)) return;
+      let c = parseClip(e.clipboardData?.getData(CLIP_MIME));
+      if (!c) {
+        const local = loadClip();
+        const txt = e.clipboardData?.getData("text/plain")?.trim();
+        if (local && txt && txt === local.summary.trim()) c = local;
+      }
+      if (!c) return;
+      e.preventDefault();
+      pasteStages(c);
+    };
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("paste", onPaste);
+    };
+  });
 
   async function deleteStage(sid: string) {
     const s = stages.find((x) => x.id === sid);
@@ -840,6 +953,18 @@ function ProjectPage() {
                       >
                         + 단계
                       </button>
+                      {clip && (
+                        <span className="flex items-center overflow-hidden rounded-md border border-brand-500/40 bg-white text-[11px]" data-tour="paste-stage">
+                          <Tip content={`${clip.summary}${clip.projectId !== id ? ` · '${clip.projectName}'에서 복사` : ""}\n${selected ? "고른 단계 바로 아래" : "맨 아래"}에 붙여넣어요 (Ctrl+V)`}>
+                            <button className="max-w-[160px] truncate px-2 py-0.5 font-medium text-brand-600 hover:bg-brand-500/10" onClick={() => pasteStages(clip)}>
+                              📋 붙여넣기
+                            </button>
+                          </Tip>
+                          <button className="border-l border-brand-500/20 px-1.5 py-0.5 text-slate-400 hover:text-rose-600" onClick={clearClip} title="복사한 단계 비우기" aria-label="복사 비우기">
+                            ✕
+                          </button>
+                        </span>
+                      )}
                     </>
                   ) : undefined
                 }
@@ -1083,6 +1208,11 @@ function ProjectPage() {
             toast("저장했습니다");
           }}
           onDelete={() => deleteStage(sel.id)}
+          onCopyStage={() => copyStage(sel.id)}
+          onDuplicate={() => {
+            const s0 = stages.find((x) => x.id === sel.id);
+            if (s0 && project) pasteStages(buildClip(s0, project, stages, checks, links), sel.id);
+          }}
           onMove={(d) => moveStage(sel.id, d)}
           onAddLog={(k, b, h) => addLog(sel.id, k, b, h)}
           onDeleteLog={deleteLog}
