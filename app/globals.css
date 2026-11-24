@@ -75,6 +75,19 @@ body {
 .rich p {
   margin: 0.15em 0;
 }
+/* 단락 사이: 줄바꿈(줄 간격)보다 조금 넓고, 빈 줄(엔터 두 번)보다는 좁게 */
+.rich p + p {
+  margin-top: 0.6em;
+}
+.rich p:empty::after {
+  /* 저장된 빈 줄(엔터 두 번)도 보기 화면에서 한 줄 높이로 */
+  content: "\00a0";
+}
+.rich li p + p,
+.rich td p + p,
+.rich th p + p {
+  margin-top: 0.15em;
+}
 .rich ul,
 .rich ol {
   margin: 0.2em 0;
