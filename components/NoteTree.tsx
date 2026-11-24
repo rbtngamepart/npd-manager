@@ -194,6 +194,7 @@ export function NoteTree(p: NoteTreeProps) {
     return (
       <div
         key={n.id}
+        data-note-id={n.id}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData("text/plain", n.id);

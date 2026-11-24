@@ -4,7 +4,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { displayName, useApp } from "@/components/AppProvider";
 import { RichEditor, htmlToText, isEmptyHtml } from "@/components/RichText";
@@ -34,6 +34,8 @@ const KIND_ICON: Record<NoteKind, string> = { doc: "📄", mindmap: "🧠" };
 const LIST_COLS = "id,title,kind,category,note_date,body_text,project_id,stage_ids,visibility,author_id,updated_by,created_at,updated_at";
 const PLUS_COLS = ",icon,cover,deleted_at,is_template,mention_ids,ref_note_ids,ref_stage_ids";
 const RECENT_KEY = "npd-notes-recent";
+// 주소만 바꾸기 (서버 왕복 없이 — Next 의 useSearchParams 와 연동됨)
+const nav = (url: string) => window.history.replaceState(null, "", url);
 
 const MEETING_TEMPLATE =
   "<p><strong>참석자</strong></p><p></p><p><strong>안건</strong></p><ol><li><p></p></li></ol><p><strong>논의 내용</strong></p><ul><li><p></p></li></ul><p><strong>결정 사항</strong></p><ul><li><p></p></li></ul><p><strong>할 일</strong></p><ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"false\"><label><input type=\"checkbox\"><span></span></label><div><p></p></div></li></ul>";
@@ -52,7 +54,6 @@ export default function NotesPage() {
 
 function Notes() {
   const { me, profileById } = useApp();
-  const router = useRouter();
   const params = useSearchParams();
   const path = usePathname();
   const selectedId = params.get("id");
@@ -192,30 +193,68 @@ function Notes() {
     })();
   }, [loadList, loadFolders, loadFavs]);
 
-  const openNote = useCallback(async (id: string) => {
-    const { data } = await supabase().from("notes").select("*").eq("id", id).maybeSingle();
-    const n = (data as Note | null) ?? null;
+  // 메모 내용 캐시: 한 번 본(또는 마우스를 올린) 메모는 바로 열고, 뒤에서 최신인지 확인
+  const cache = useRef(new Map<string, Note>());
+  const pending = useRef(new Map<string, Promise<Note | null>>());
+  const fetchNote = useCallback((id: string) => {
+    const running = pending.current.get(id);
+    if (running) return running;
+    const run = (async () => {
+      const { data } = await supabase().from("notes").select("*").eq("id", id).maybeSingle();
+      const n = (data as Note | null) ?? null;
+      if (n) cache.current.set(id, n);
+      pending.current.delete(id);
+      return n;
+    })();
+    pending.current.set(id, run);
+    return run;
+  }, []);
+  const prefetch = useCallback(
+    (id: string | null | undefined) => {
+      if (id && !cache.current.has(id) && id !== draftRef.current?.id) void fetchNote(id);
+    },
+    [fetchNote]
+  );
+  const applyNote = useCallback((n: Note | null) => {
     setDraft(n);
     savedMentions.current = n?.mention_ids ?? [];
-    if (n) {
-      setCurFolder(n.folder_id ?? null);
-      if (!n.is_template && !n.deleted_at)
-        setRecents((r) => {
-          const next = [n.id, ...r.filter((x) => x !== n.id)].slice(0, 10);
-          try {
-            localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-          } catch {
-            /* 무시 */
-          }
-          return next;
-        });
-    }
+    if (n) setCurFolder(n.folder_id ?? null);
     base.current = n?.updated_at ?? null;
     setDirty(false);
     setConflict(null);
     setSaveState("idle");
     setRk((k) => k + 1);
   }, []);
+  // 최근 본 메모: 저장은 실제로 연 순서, 화면 순서는 이미 있으면 그대로 (누른 자리에서 항목이 움직이지 않게)
+  const remember = useCallback((n: Note) => {
+    if (n.is_template || n.deleted_at) return;
+    try {
+      const cur = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+      const list = Array.isArray(cur) ? cur.filter((x): x is string => typeof x === "string" && x !== n.id) : [];
+      localStorage.setItem(RECENT_KEY, JSON.stringify([n.id, ...list].slice(0, 10)));
+    } catch {
+      /* 무시 */
+    }
+    setRecents((r) => (r.includes(n.id) ? r : [n.id, ...r].slice(0, 10)));
+  }, []);
+  const openSeq = useRef(0);
+  const openNote = useCallback(
+    async (id: string) => {
+      const seq = ++openSeq.current;
+      const hit = cache.current.get(id);
+      if (hit) {
+        applyNote(hit);
+        remember(hit);
+      }
+      const n = await fetchNote(id);
+      if (!hit && n) remember(n);
+      if (seq !== openSeq.current) return; // 그사이 다른 메모를 열었음
+      if (hit && n && hit.updated_at === n.updated_at) return; // 캐시가 최신
+      if (hit && n && dirtyRef.current) return; // 이미 고치는 중 → 저장 때 충돌 확인
+      applyNote(n);
+    },
+    [applyNote, fetchNote, remember]
+  );
 
   useEffect(() => {
     if (selectedId) openNote(selectedId);
@@ -264,6 +303,7 @@ function Notes() {
       }
       const row = data as unknown as Note;
       base.current = row.updated_at;
+      cache.current.set(d.id, { ...d, ...row });
       // 새로 언급한 사람에게 알림 (팀 공개 메모만, 서버에서 다시 확인)
       if (row.mention_ids) {
         const fresh = newMentions(savedMentions.current, row.mention_ids);
@@ -298,8 +338,11 @@ function Notes() {
   // 다른 메모로 옮기기 전에 저장
   const go = async (id: string | null, extra = "") => {
     if (timer.current) clearTimeout(timer.current);
-    if (dirtyRef.current && !conflictRef.current) await save();
-    router.replace(id ? `${path}?id=${id}${extra}` : path);
+    if (dirtyRef.current && !conflictRef.current) {
+      if (id) prefetch(id); // 저장하는 동안 다음 메모도 같이 받아 두기
+      await save();
+    }
+    nav(id ? `${path}?id=${id}${extra}` : path);
   };
 
   // ---- 실시간: 목록 갱신, 열린 메모를 남이 고치면 반영 --------------------
@@ -313,6 +356,9 @@ function Notes() {
         if (t) clearTimeout(t);
         t = setTimeout(loadList, 400);
         const row = pl.new as Partial<Note> | undefined;
+        const gone = (pl.old as Partial<Note> | undefined)?.id;
+        if (row?.id && row.updated_by !== me?.id) cache.current.delete(row.id); // 남이 고친 메모는 다시 받기
+        if (gone && !row?.id) cache.current.delete(gone);
         const d = draftRef.current;
         if (!d || !row?.id || row.id !== d.id || row.updated_by === me?.id) return;
         if (row.updated_at && row.updated_at === base.current) return;
@@ -374,9 +420,10 @@ function Notes() {
         return;
       }
       setNotes((ns) => [data as Note, ...ns]);
-      router.replace(`${path}?id=${(data as Note).id}&fresh=1`);
+      cache.current.set((data as Note).id, data as Note);
+      nav(`${path}?id=${(data as Note).id}&fresh=1`);
     },
-    [cat, scope, proj, stages, router, save, path, curFolder]
+    [cat, scope, proj, stages, save, path, curFolder]
   );
 
   // 단계 패널에서 [+ 메모] → /notes?new=doc&project=..&stage=..
@@ -396,7 +443,7 @@ function Notes() {
       setDirty(false);
       await supabase().from("notes").delete().eq("id", d.id);
       setNotes((ns) => ns.filter((n) => n.id !== d.id));
-      router.replace(path);
+      nav(path);
       return;
     }
     // 휴지통으로 (30일 뒤 자동 삭제)
@@ -406,7 +453,7 @@ function Notes() {
     const { data, error } = await supabase().from("notes").update({ deleted_at: new Date().toISOString() }).eq("id", d.id).select("id");
     if (error || !data?.length) return alert("휴지통으로 옮기지 못했습니다. 권한을 확인하세요.");
     setNotes((ns) => ns.map((n) => (n.id === d.id ? { ...n, deleted_at: new Date().toISOString() } : n)));
-    router.replace(path);
+    nav(path);
     say(`'${d.title || "제목 없음"}'을(를) 휴지통으로 옮겼습니다`, { label: "되돌리기", run: () => restore(d.id, true) });
   }
   async function restore(id: string, open = false) {
@@ -414,7 +461,7 @@ function Notes() {
     if (error || !data?.length) return alert("되살리지 못했습니다. 권한을 확인하세요.");
     setNotes((ns) => ns.map((n) => (n.id === id ? { ...n, deleted_at: null } : n)));
     if (draftRef.current?.id === id) setDraft((x) => (x ? { ...x, deleted_at: null } : x));
-    if (open) router.replace(`${path}?id=${id}`);
+    if (open) nav(`${path}?id=${id}`);
     say("되살렸습니다");
   }
   async function destroy(n: Note) {
@@ -422,7 +469,7 @@ function Notes() {
     const { data, error } = await supabase().from("notes").delete().eq("id", n.id).select("id");
     if (error || !data?.length) return alert("지우지 못했습니다. 완전 삭제는 작성자나 관리자만 할 수 있어요.");
     setNotes((ns) => ns.filter((x) => x.id !== n.id));
-    if (selectedId === n.id) router.replace(path);
+    if (selectedId === n.id) nav(path);
   }
   async function openTrash() {
     setTrashView(true);
@@ -660,6 +707,13 @@ function Notes() {
   const canEdit = !!draft && !!me && !draft.deleted_at && (draft.author_id === me.id || (draft.visibility === "shared" && !!me.is_game_part));
   const favList = live.filter((n) => favs.has(n.id));
   const recentList = recents.map((id) => live.find((n) => n.id === id)).filter((n): n is Note => !!n && !favs.has(n.id)).slice(0, 5);
+  // 즐겨찾기·최근 본 메모는 미리 받아 두기 (눌렀을 때 바로 열리게)
+  const warmIds = [...favList, ...recentList].map((n) => n.id).join(",");
+  useEffect(() => {
+    if (!warmIds) return;
+    const t = setTimeout(() => warmIds.split(",").slice(0, 12).forEach((id) => prefetch(id)), 600);
+    return () => clearTimeout(t);
+  }, [warmIds, prefetch]);
   const isAuthor = !!draft && draft.author_id === me?.id;
   const fresh = params.get("fresh") === "1";
 
@@ -743,7 +797,7 @@ function Notes() {
               {view === "tree" && <span className="ml-auto text-[10px] text-slate-400">끌어서 폴더로 옮기기</span>}
             </div>
           )}
-          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto" onMouseOver={(e) => prefetch((e.target as Element).closest?.("[data-note-id]")?.getAttribute("data-note-id"))}>
             {!trashView && !filtering && !loading && (favList.length > 0 || recentList.length > 0) && (
               <div className="border-b border-black/[0.06] pb-1.5" data-tour="notes-favs">
                 {[
@@ -757,6 +811,7 @@ function Notes() {
                       {g.list.map((n) => (
                         <button
                           key={n.id}
+                          data-note-id={n.id}
                           onClick={() => go(n.id)}
                           onContextMenu={(e) => noteMenu(e, n)}
                           className={`flex w-full items-center gap-1.5 border-l-2 py-1 pl-5 pr-3 text-left text-sm ${n.id === selectedId ? "border-brand-500 bg-brand-500/[0.07] font-medium" : "border-transparent hover:bg-slate-50"}`}
@@ -841,6 +896,7 @@ function Notes() {
                       return (
                         <li key={n.id}>
                           <button
+                            data-note-id={n.id}
                             onClick={() => go(n.id)}
                             onContextMenu={(e) => noteMenu(e, n)}
                             className={`block w-full border-l-2 px-3 py-2 text-left ${active ? "border-brand-500 bg-brand-500/[0.06]" : "border-transparent hover:bg-slate-50"}`}
