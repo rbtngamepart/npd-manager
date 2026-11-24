@@ -189,7 +189,7 @@ export function NoteTree(p: NoteTreeProps) {
   const pad = (d: number) => 8 + d * 14;
 
   const noteRow = (n: Note, depth: number) => {
-    const view = n.id === selectedId && draft ? { ...n, ...draft } : n;
+    const view = draft?.id === n.id ? { ...n, ...draft } : n;
     const active = n.id === selectedId;
     return (
       <div

@@ -238,9 +238,11 @@ function Notes() {
     setRecents((r) => (r.includes(n.id) ? r : [n.id, ...r].slice(0, 10)));
   }, []);
   const openSeq = useRef(0);
+  const openedId = useRef<string | null>(null); // 마지막으로 연 메모 (주소가 바뀌기 전에 먼저 열 수 있게)
   const openNote = useCallback(
     async (id: string) => {
       const seq = ++openSeq.current;
+      openedId.current = id;
       const hit = cache.current.get(id);
       if (hit) {
         applyNote(hit);
@@ -257,8 +259,12 @@ function Notes() {
   );
 
   useEffect(() => {
-    if (selectedId) openNote(selectedId);
-    else setDraft(null);
+    if (selectedId) {
+      if (openedId.current !== selectedId) openNote(selectedId); // go()에서 이미 열었으면 다시 열지 않음
+    } else {
+      openedId.current = null;
+      setDraft(null);
+    }
   }, [selectedId, openNote]);
 
   // ---- 저장 (자동) --------------------------------------------------------
@@ -342,6 +348,7 @@ function Notes() {
       if (id) prefetch(id); // 저장하는 동안 다음 메모도 같이 받아 두기
       await save();
     }
+    if (id) openNote(id); // 주소와 같은 순간에 내용도 바꾸기 (앞 메모 제목이 잠깐 보이지 않게)
     nav(id ? `${path}?id=${id}${extra}` : path);
   };
 
@@ -817,7 +824,7 @@ function Notes() {
                           className={`flex w-full items-center gap-1.5 border-l-2 py-1 pl-5 pr-3 text-left text-sm ${n.id === selectedId ? "border-brand-500 bg-brand-500/[0.07] font-medium" : "border-transparent hover:bg-slate-50"}`}
                         >
                           <span className="text-xs">{n.icon || KIND_ICON[n.kind]}</span>
-                          <span className={`min-w-0 flex-1 truncate ${n.title ? "" : "text-slate-400"}`}>{(n.id === selectedId && draft ? draft.title : n.title) || "제목 없음"}</span>
+                          <span className={`min-w-0 flex-1 truncate ${n.title ? "" : "text-slate-400"}`}>{(draft?.id === n.id ? draft.title : n.title) || "제목 없음"}</span>
                         </button>
                       ))}
                     </div>
@@ -892,7 +899,7 @@ function Notes() {
                   <ul>
                     {g.items.map((n) => {
                       const active = n.id === selectedId;
-                      const view = active && draft ? { ...n, ...draft } : n;
+                      const view = draft?.id === n.id ? { ...n, ...draft } : n;
                       return (
                         <li key={n.id}>
                           <button
@@ -931,7 +938,10 @@ function Notes() {
       )}
 
       {/* ---- 편집 ---- */}
-      <section className={`card min-w-0 flex-1 flex-col overflow-hidden ${selectedId ? "flex" : "hidden lg:flex"}`} data-tour="notes-editor">
+      <section
+        className={`card min-w-0 flex-1 flex-col overflow-hidden transition-opacity duration-150 ${selectedId ? "flex" : "hidden lg:flex"} ${draft && selectedId && draft.id !== selectedId ? "pointer-events-none opacity-40" : ""}`}
+        data-tour="notes-editor"
+      >
         {!selectedId || !draft ? (
           <div className="grid flex-1 place-items-center p-10 text-center text-sm text-slate-400">
             {selectedId ? (
