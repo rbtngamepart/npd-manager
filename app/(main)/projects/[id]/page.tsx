@@ -679,9 +679,59 @@ function ProjectPage() {
     load();
   }
 
+  // 여러 단계를 골라 둔 채 그중 하나를 끌면 → 고른 단계 모두 순서대로 옮김
+  async function treeDropMany(target: TreeRef, zone: DropZone) {
+    if (!groups) return;
+    const sel = new Set(multi);
+    const byId = new Map(stages.map((x) => [x.id, x]));
+    const underSel = (sid: string | null | undefined, self = false) => {
+      let cur = self ? sid : byId.get(sid ?? "")?.parent_id;
+      for (let i = 0; cur && i < 50; i++) {
+        if (sel.has(cur)) return true;
+        cur = byId.get(cur)?.parent_id;
+      }
+      return false;
+    };
+    // 고른 단계의 하위 단계는 위 단계와 함께 따라가므로 맨 위 것만
+    const roots = orderOf([...sel].filter((x) => byId.has(x) && !underSel(x)));
+    if (target.kind === "stage" && underSel(target.id, true)) return toast("고른 단계 안이나 그 하위로는 옮길 수 없습니다");
+    if (zone === "inside" && target.kind === "stage" && stages[0]?.parent_id === undefined) {
+      return toast("단계 아래에 넣으려면 DB 업데이트(009_stage_tree.sql)가 필요합니다");
+    }
+    let list = stages;
+    let gl = groups;
+    const sp = new Map<string, OrderPatch["stages"][number]>();
+    const gp = new Map<string, OrderPatch["groups"][number]>();
+    let prev: string | null = null;
+    for (const rid of roots) {
+      const plan: OrderPatch | null = prev
+        ? dropPlan({ kind: "stage", id: rid }, { kind: "stage", id: prev }, "after", list, gl)
+        : dropPlan({ kind: "stage", id: rid }, target, zone, list, gl);
+      if (!plan) return toast("그 위치로는 옮길 수 없습니다");
+      plan.stages.forEach((x) => sp.set(x.id, { ...sp.get(x.id), ...x }));
+      plan.groups.forEach((x) => gp.set(x.id, { ...gp.get(x.id), ...x }));
+      list = list.map((x) => {
+        const pch = plan.stages.find((y) => y.id === x.id);
+        return pch ? { ...x, ...pch } : x;
+      });
+      gl = gl.map((x) => {
+        const pch = plan.groups.find((y) => y.id === x.id);
+        return pch ? { ...x, ...pch } : x;
+      });
+      prev = rid;
+    }
+    const merged: OrderPatch = { stages: [...sp.values()], groups: [...gp.values()] };
+    if (stages[0]?.parent_id === undefined) merged.stages.forEach((x) => delete x.parent_id);
+    if (zone === "inside" && collapsed.has(target.id)) toggleGroup(target.id);
+    await applyOrder(merged);
+    const name = target.kind === "stage" ? stages.find((x) => x.id === target.id)?.name : groups.find((x) => x.id === target.id)?.name;
+    toast(`단계 ${roots.length}개를 ${zone === "inside" ? `'${name}' 안으로` : `'${name}' ${zone === "before" ? "위로" : "아래로"}`} 옮겼습니다`);
+  }
+
   // 간트에서 끌어서 놓기
   async function treeDrop(drag: TreeRef, target: TreeRef, zone: DropZone) {
     if (!groups) return;
+    if (drag.kind === "stage" && multi.size > 1 && multi.has(drag.id)) return treeDropMany(target, zone);
     if (zone === "inside" && target.kind === "stage" && stages[0]?.parent_id === undefined) {
       return toast("단계 아래에 넣으려면 DB 업데이트(009_stage_tree.sql)가 필요합니다");
     }

@@ -262,6 +262,15 @@ export function Gantt({
           onDragStart: (e: React.DragEvent) => {
             e.dataTransfer.effectAllowed = "move";
             e.dataTransfer.setData("text/plain", ref.id);
+            // 고른 단계 여러 개 중 하나를 끌면 함께 옮긴다는 표시
+            if (ref.kind === "stage" && multi && multi.size > 1 && multi.has(ref.id)) {
+              const ghost = document.createElement("div");
+              ghost.textContent = `⋮⋮ 단계 ${multi.size}개 함께 옮기기`;
+              ghost.style.cssText = "position:fixed;top:-100px;left:0;padding:4px 10px;border-radius:8px;background:#e11d48;color:#fff;font:600 12px sans-serif;white-space:nowrap";
+              document.body.appendChild(ghost);
+              e.dataTransfer.setDragImage(ghost, 10, 10);
+              setTimeout(() => ghost.remove(), 0);
+            }
             setDragItem(ref);
           },
           onDragEnd: () => {
@@ -274,6 +283,8 @@ export function Gantt({
       ? {
           onDragOver: (e: React.DragEvent) => {
             if (dragItem.id === ref.id && dragItem.kind === ref.kind) return;
+            // 여러 개를 함께 끌 때는 고른 단계 위에는 못 놓음
+            if (dragItem.kind === "stage" && ref.kind === "stage" && multi && multi.size > 1 && multi.has(dragItem.id) && multi.has(ref.id)) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
