@@ -276,7 +276,7 @@ export function StagePanel({
     async () => {
       if (dirty) await save();
       if (draftLog) await addLog();
-      if (editLog && !isEmptyHtml(editLog.html)) await onUpdateLog(editLog.id, htmlToText(editLog.html), editLog.html);
+      if (editLog && !isEmptyHtml(editLog.html)) await finishEdit("save"); // 저장하고 보기 상태로
       return true;
     }
   );

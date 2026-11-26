@@ -21,6 +21,28 @@ export function hasUnsaved(): boolean {
   return dirty.size > 0;
 }
 
+/**
+ * 지금 고치고 있는 것을 모두 저장 (Ctrl+S)
+ *   "none": 저장할 게 없음 · "ok": 저장함 · "fail": 실패(또는 저장 기능 없는 입력만 있음)
+ */
+export async function saveAllDirty(): Promise<"none" | "ok" | "fail"> {
+  const entries = Array.from(dirty.values());
+  if (!entries.length) return "none";
+  let ok = true;
+  for (const e of entries) {
+    if (!e.save) {
+      ok = false;
+      continue;
+    }
+    try {
+      if (!(await e.save())) ok = false;
+    } catch {
+      ok = false;
+    }
+  }
+  return ok ? "ok" : "fail";
+}
+
 export interface AskText {
   title: string;
   save: string;
@@ -81,6 +103,32 @@ export function UnsavedGuard() {
   const router = useRouter();
   const [dlg, setDlg] = useState<{ what: string; canSave: boolean; text: AskText; resolve: (c: "save" | "discard" | "cancel") => void } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ctrlS = useRef(false);
+  const dlgOpen = useRef(false);
+  dlgOpen.current = !!dlg;
+
+  // Ctrl+S (맥은 ⌘S): 고치던 내용 모두 저장. 브라우저의 '페이지 저장' 창은 막음
+  useEffect(() => {
+    const show = (m: string) => {
+      setFlash(m);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlash(null), 1800);
+    };
+    const onKey = async (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyS") return;
+      e.preventDefault();
+      if (dlgOpen.current || ctrlS.current) return;
+      ctrlS.current = true;
+      show("저장 중…");
+      const r = await saveAllDirty();
+      ctrlS.current = false;
+      show(r === "none" ? "바뀐 내용이 없어요 (이미 저장됨)" : r === "ok" ? "✓ 저장했습니다" : "저장하지 못한 내용이 있어요");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     ask = (what, canSave, text) => new Promise((resolve) => setDlg({ what, canSave, text, resolve }));
@@ -133,7 +181,12 @@ export function UnsavedGuard() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [dlg, saving]);
 
-  if (!dlg) return null;
+  const flashEl = flash && (
+    <div className="pointer-events-none fixed bottom-6 left-1/2 z-[95] -translate-x-1/2 rounded-full bg-slate-900/90 px-4 py-1.5 text-xs text-white shadow-lg" role="status">
+      {flash}
+    </div>
+  );
+  if (!dlg) return flashEl || null;
   const pick = async (c: "save" | "discard" | "cancel") => {
     if (c === "save") setSaving(true);
     dlg.resolve(c);
