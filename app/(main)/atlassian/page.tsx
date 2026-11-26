@@ -45,7 +45,9 @@ export default function AtlassianPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [test, setTest] = useState("");
   const [found, setFound] = useState<Record<string, { name: string; project: string; pid: string; id: string } | null>>({});
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://rbtngamepartnpd.netlify.app";
+  // 서버와 브라우저가 같은 글자로 그리도록, 실제 주소는 화면이 뜬 뒤에 채움
+  const [origin, setOrigin] = useState("https://rbtngamepartnpd.netlify.app");
+  useEffect(() => setOrigin(window.location.origin), []);
 
   const show = (m: string) => {
     setToast(m);

@@ -1415,7 +1415,7 @@ function ProjectPage() {
                         }`}
                       />
                       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-400">
-                        <span className={`rounded px-1.5 py-px text-[11px] ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
+                        <span className={`rounded px-1.5 py-px text-[11px] ${(KIND[l.kind] ?? KIND.memo).cls}`}>{(KIND[l.kind] ?? KIND.memo).label}</span>
                         {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-[11px] text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
                         {l.source && l.ext_detached_at && (
                           <Tip content="지라·컨플루언스 원문에서 이 단계 코드가 지워졌습니다. 기록은 남겨두고 더 이상 갱신하지 않아요.">

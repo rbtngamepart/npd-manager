@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 import { parseCalendar, type CalEvent } from "./ics";
 import { createHash } from "node:crypto";
+import { safeEqual } from "@/lib/safeEqual";
 import { addDaysStr, fromScript, isDate, type ScriptEvent } from "./script";
 import { planSync, type EventRow, type ProjectRow, type StageRow } from "./apply";
 
@@ -13,7 +14,7 @@ export const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "A
 export async function authorize(req: Request): Promise<{ ok: true; userId: string | null } | { ok: false; res: NextResponse }> {
   const cron = process.env.CRON_SECRET;
   const key = req.headers.get("x-cron-key");
-  if (cron && key && key === cron) return { ok: true, userId: null };
+  if (safeEqual(key, cron)) return { ok: true, userId: null };
   const sb = await supabaseServer();
   const {
     data: { user },

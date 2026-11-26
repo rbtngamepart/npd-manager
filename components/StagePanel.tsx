@@ -232,6 +232,11 @@ export function StagePanel({
   // 다른 곳(체크리스트·링크 추가, 다른 사람 수정 등)에서 단계를 다시 불러와도
   // 아직 저장하지 않은 내 입력은 지키고, 내가 안 건드린 칸만 새 값으로 바꿈
   const lastBase = useRef<{ id: string; base: Form } | null>(null);
+  const fRef = useRef(f);
+  fRef.current = f;
+  // 설명 편집기를 새 내용으로 다시 채울 때만 올림 (다른 사람이 설명을 고쳤을 때)
+  //   새 입력값과 같은 순간에 바뀌어야 편집기가 옛 내용을 물지 않음
+  const [descRev, setDescRev] = useState(0);
   useEffect(() => {
     const next = pick(stage);
     const prev = lastBase.current;
@@ -240,14 +245,14 @@ export function StagePanel({
       setF(next);
       return;
     }
-    setF((cur) => {
-      const merged = { ...cur } as Record<keyof Form, unknown>;
-      (Object.keys(next) as (keyof Form)[]).forEach((k) => {
-        const untouched = JSON.stringify(cur[k] ?? null) === JSON.stringify(prev.base[k] ?? null);
-        if (untouched) merged[k] = next[k];
-      });
-      return merged as Form;
+    const cur = fRef.current;
+    const merged = { ...cur } as Record<keyof Form, unknown>;
+    (Object.keys(next) as (keyof Form)[]).forEach((k) => {
+      const untouched = JSON.stringify(cur[k] ?? null) === JSON.stringify(prev.base[k] ?? null);
+      if (untouched) merged[k] = next[k];
     });
+    setF(merged as Form);
+    if ((merged.description_html ?? null) !== (cur.description_html ?? null) || (merged.description ?? null) !== (cur.description ?? null)) setDescRev((r) => r + 1);
   }, [stage]);
   useEffect(() => setPreview(null), [stage.id]);
 
@@ -672,7 +677,7 @@ export function StagePanel({
         ) : v8 ? (
           <RichEditor
             value={descHtml}
-            resetKey={stage.id + (stage.updated_at ?? "")}
+            resetKey={`${stage.id}-${descRev}`}
             disabled={ro}
             minHeight={56}
             placeholder="이 단계에서 하는 일"
@@ -865,7 +870,7 @@ export function StagePanel({
     const isEditing = editLog?.id === l.id;
     return (
       <div className={`flex items-center gap-1.5 text-slate-400 ${inModal ? "text-xs" : "text-[11px]"}`}>
-        <span className={`rounded px-1.5 py-px ${KIND[l.kind].cls}`}>{KIND[l.kind].label}</span>
+        <span className={`rounded px-1.5 py-px ${(KIND[l.kind] ?? KIND.memo).cls}`}>{(KIND[l.kind] ?? KIND.memo).label}</span>
         {l.source && <span className="rounded bg-slate-900 px-1.5 py-px text-white">{l.source === "jira" ? "Jira" : "Confluence"}</span>}
         {l.source && l.ext_detached_at && (
           <Tip content="지라·컨플루언스 원문에서 이 단계 코드가 지워졌습니다. 기록은 남겨두고 더 이상 갱신하지 않아요. 코드를 다시 적으면 다시 연결됩니다.">
@@ -1194,7 +1199,7 @@ export function StagePanel({
                   <div className="min-h-0 flex-1">
                     <RichEditor
                       value={descHtml}
-                      resetKey={`big-desc-${stage.id}`}
+                      resetKey={`big-desc-${stage.id}-${descRev}`}
                       onChange={setDescHtml}
                       onSubmit={async () => {
                         await save();

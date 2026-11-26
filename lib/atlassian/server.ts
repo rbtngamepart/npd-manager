@@ -1,5 +1,6 @@
 import "server-only";
 // 지라·컨플루언스 → NPD 단계 기록 (서버 전용)
+import { safeEqual } from "@/lib/safeEqual";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { adfToText, cleanLine, findMentions, shortHash, storageToText } from "./extract";
 import { notifyChange, type StageChange } from "./slack";
@@ -205,7 +206,7 @@ export function checkWebhookKey(got: string | null): { ok: boolean; hint: string
   const a = process.env.ATLASSIAN_WEBHOOK_SECRET?.trim();
   const c = process.env.CRON_SECRET?.trim();
   const g = got?.trim() ?? "";
-  if (g && (g === a || g === c)) return { ok: true, hint: "" };
+  if (safeEqual(g, a) || safeEqual(g, c)) return { ok: true, hint: "" };
   const set = [a && "ATLASSIAN_WEBHOOK_SECRET", c && "CRON_SECRET"].filter(Boolean).join(", ");
   return {
     ok: false,
