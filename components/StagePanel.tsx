@@ -826,7 +826,7 @@ export function StagePanel({
         </div>
       </section>
 
-      {deps && <StageDeps key={stage.id} stage={stage} stages={stages} deps={deps} canEdit={canEdit} onChanged={onChanged} onOpen={onOpenStage} />}
+      {deps && <StageDeps key={`deps-${stage.id}`} stage={stage} stages={stages} deps={deps} canEdit={canEdit} onChanged={onChanged} onOpen={onOpenStage} />}
     </div>
   );
 
@@ -926,7 +926,7 @@ export function StagePanel({
   const records = (
     <div className="space-y-5" key="records">
       {checks && (
-        <StageChecklist key={stage.id}
+        <StageChecklist key={`checks-${stage.id}`}
           projectId={stage.project_id}
           stageId={stage.id}
           items={checks}
@@ -936,9 +936,9 @@ export function StagePanel({
           onChanged={onChanged}
         />
       )}
-      {links && <StageLinks key={stage.id} projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
-      <StageNotes key={stage.id} projectId={stage.project_id} stageId={stage.id} canEdit={canEdit} />
-      <StageExternal key={stage.id} logs={logs} canEdit={canEdit} onHide={onHideExt} deleted={deletedExt} onRestore={onRestoreExt} />
+      {links && <StageLinks key={`links-${stage.id}`} projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
+      <StageNotes key={`notes-${stage.id}`} projectId={stage.project_id} stageId={stage.id} canEdit={canEdit} />
+      <StageExternal key={`ext-${stage.id}`} logs={logs} canEdit={canEdit} onHide={onHideExt} deleted={deletedExt} onRestore={onRestoreExt} />
 
       {calEvents.length > 0 && (
         <section className="space-y-2" data-tour="sp-cal-events">
