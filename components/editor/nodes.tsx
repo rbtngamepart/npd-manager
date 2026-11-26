@@ -1,6 +1,7 @@
 "use client";
 
 // 편집기 블록: 콜아웃 · 이미지 · 파일 · 임베드 · @사람 · [[메모·단계 링크]]
+import { openLightbox } from "./lightbox";
 import { useEffect, useState } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type ReactNodeViewProps } from "@tiptap/react";
@@ -100,7 +101,14 @@ function ImageView({ node, selected }: ReactNodeViewProps) {
   }, [path, node.attrs.src]);
   return (
     <NodeViewWrapper className={`npd-img ${selected ? "is-selected" : ""}`} data-drag-handle>
-      {src ? <img src={src} alt={(node.attrs.alt as string) || ""} draggable={false} /> : <span className="npd-img-loading">이미지 불러오는 중…</span>}
+      {src ? (
+        <img
+          src={src}
+          alt={(node.attrs.alt as string) || ""}
+          draggable={false}
+          onClick={() => openLightbox(src, (node.attrs.alt as string) || "")}
+        />
+      ) : <span className="npd-img-loading">이미지 불러오는 중…</span>}
     </NodeViewWrapper>
   );
 }

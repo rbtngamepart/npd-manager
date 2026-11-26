@@ -14,6 +14,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
 import { TableKit } from "@tiptap/extension-table";
 import FileHandler from "@tiptap/extension-file-handler";
+import { openLightbox } from "./editor/lightbox";
 import DOMPurify from "dompurify";
 import { useApp, displayName } from "./AppProvider";
 import { Callout, Embed, FileBlock, FileImage, PersonMention, RefLink } from "./editor/nodes";
@@ -559,6 +560,8 @@ export function RichView({ html, onChange, className = "" }: { html: string | nu
   useEffect(() => setMounted(true), []);
   const clean = useMemo(() => (mounted ? sanitize(html ?? "") : ""), [html, mounted]);
   const ref = useRef<HTMLDivElement>(null);
+  // 같은 객체를 넘겨야 다시 그릴 때 내용을 갈아끼우지 않음 (갈아끼우면 불러온 사진 주소가 사라짐)
+  const inner = useMemo(() => ({ __html: clean }), [clean]);
 
   // 이미지·임베드 보이게
   useEffect(() => {
@@ -576,6 +579,13 @@ export function RichView({ html, onChange, className = "" }: { html: string | nu
 
   function onClick(e: React.MouseEvent) {
     const t = e.target as HTMLElement;
+    if (t instanceof HTMLImageElement && t.src) {
+      // 사진 크게 보기 (기록을 누르면 열리는 큰 창보다 먼저)
+      e.preventDefault();
+      e.stopPropagation();
+      openLightbox(t.src, t.alt);
+      return;
+    }
     const file = t.closest?.('div[data-type="file"]');
     if (file) {
       e.preventDefault();
@@ -599,5 +609,5 @@ export function RichView({ html, onChange, className = "" }: { html: string | nu
   }
 
   if (isEmptyHtml(clean)) return null;
-  return <div ref={ref} onClick={onClick} className={`rich text-sm ${className}`} dangerouslySetInnerHTML={{ __html: clean }} />;
+  return <div ref={ref} onClick={onClick} className={`rich text-sm ${className}`} dangerouslySetInnerHTML={inner} />;
 }
