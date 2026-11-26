@@ -251,13 +251,19 @@ export function StagePanel({
   }, [stage]);
   useEffect(() => setPreview(null), [stage.id]);
 
-  // 다른 단계로 바뀌면 쓰던 기록 초안도 비움
-  useEffect(() => {
+  // 다른 단계로 바뀌면 그리기 '전에' 입력값을 새 단계 것으로 바꿈
+  //   (효과(useEffect)에서 바꾸면 한 번은 새 단계에 앞 단계 입력값이 그려져서,
+  //    단계 설명 편집기가 앞 단계 내용을 물고 그 내용이 새 단계에 저장되는 문제가 있었음)
+  const [shownId, setShownId] = useState(stage.id);
+  if (shownId !== stage.id) {
+    setShownId(stage.id);
+    setF(pick(stage));
     setNote("");
     setEditLog(null);
     setNoteKey((k) => k + 1);
     setBig(null);
-  }, [stage.id]);
+    setKind("memo");
+  }
 
   const base = pick(stage);
   const dirty = (Object.keys(f) as (keyof Form)[]).some((k) => JSON.stringify(f[k] ?? null) !== JSON.stringify(base[k] ?? null));
@@ -820,7 +826,7 @@ export function StagePanel({
         </div>
       </section>
 
-      {deps && <StageDeps stage={stage} stages={stages} deps={deps} canEdit={canEdit} onChanged={onChanged} onOpen={onOpenStage} />}
+      {deps && <StageDeps key={stage.id} stage={stage} stages={stages} deps={deps} canEdit={canEdit} onChanged={onChanged} onOpen={onOpenStage} />}
     </div>
   );
 
@@ -920,7 +926,7 @@ export function StagePanel({
   const records = (
     <div className="space-y-5" key="records">
       {checks && (
-        <StageChecklist
+        <StageChecklist key={stage.id}
           projectId={stage.project_id}
           stageId={stage.id}
           items={checks}
@@ -930,9 +936,9 @@ export function StagePanel({
           onChanged={onChanged}
         />
       )}
-      {links && <StageLinks projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
-      <StageNotes projectId={stage.project_id} stageId={stage.id} canEdit={canEdit} />
-      <StageExternal logs={logs} canEdit={canEdit} onHide={onHideExt} deleted={deletedExt} onRestore={onRestoreExt} />
+      {links && <StageLinks key={stage.id} projectId={stage.project_id} stageId={stage.id} items={links} canEdit={canEdit} onChanged={onChanged} onPreview={setPreview} />}
+      <StageNotes key={stage.id} projectId={stage.project_id} stageId={stage.id} canEdit={canEdit} />
+      <StageExternal key={stage.id} logs={logs} canEdit={canEdit} onHide={onHideExt} deleted={deletedExt} onRestore={onRestoreExt} />
 
       {calEvents.length > 0 && (
         <section className="space-y-2" data-tour="sp-cal-events">
