@@ -329,6 +329,48 @@ export function Gantt({
   const scroller = useRef<HTMLDivElement>(null);
   const [boxW, setBoxW] = useState(1200);
 
+  // 단계 이름을 끄는 동안 위·아래 가장자리에 가까이 가면 부드럽게 스크롤
+  //   (가장자리에 가까울수록 빠르게, 칸 밖으로 나가면 가장 빠르게. 칸이 끝까지 가면 화면 전체를 스크롤)
+  useEffect(() => {
+    if (!dragItem) return;
+    const el = scroller.current;
+    if (!el) return;
+    let y: number | null = null;
+    let raf = 0;
+    let last = performance.now();
+    const onOver = (e: DragEvent) => {
+      y = e.clientY;
+    };
+    const EDGE = 80;
+    const MAX = 900; // px/초
+    const tick = (now: number) => {
+      const dt = Math.min(50, now - last);
+      last = now;
+      if (y != null) {
+        const r = el.getBoundingClientRect();
+        const head = (el.querySelector(":scope > div > .sticky") as HTMLElement | null)?.offsetHeight ?? 0;
+        const top = Math.max(r.top + head, 0);
+        const bottom = Math.min(r.bottom, window.innerHeight);
+        let v = 0;
+        if (y < top + EDGE) v = -Math.min(1, (top + EDGE - y) / EDGE);
+        else if (y > bottom - EDGE) v = Math.min(1, (y - (bottom - EDGE)) / EDGE);
+        if (v) {
+          const dy = Math.sign(v) * v * v * MAX * (dt / 1000); // 가장자리 쪽으로 갈수록 빨라짐
+          const before = el.scrollTop;
+          el.scrollTop += dy;
+          if (el.scrollTop === before) window.scrollBy(0, dy); // 칸이 끝이면 화면 전체
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    document.addEventListener("dragover", onOver, true);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      document.removeEventListener("dragover", onOver, true);
+      cancelAnimationFrame(raf);
+    };
+  }, [dragItem]);
+
   // 화면 너비만큼은 항상 타임라인을 채움
   useEffect(() => {
     const el = scroller.current;
