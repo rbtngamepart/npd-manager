@@ -218,6 +218,14 @@ function Toolbar({ editor, blocks, uploading, onPick }: { editor: Editor; blocks
       <Btn title="서식 지우기" onClick={() => c().unsetAllMarks().clearNodes().run()}>
         ⌫
       </Btn>
+      {!blocks && (
+        <>
+          <Btn title="사진·파일 넣기 (캡처 후 Ctrl+V, 끌어놓기도 돼요)" onClick={() => onPick?.()}>
+            🖼️
+          </Btn>
+          {!!uploading && <span className="ml-1 animate-pulse text-[11px] text-brand-600">올리는 중… {uploading}</span>}
+        </>
+      )}
       {blocks && (
         <>
           <span className="mx-1 h-4 w-px bg-black/10" />
@@ -397,16 +405,12 @@ export function RichEditor({
           return blocks ? "' / ' 를 입력해 블록 추가" : "";
         },
       }),
-      ...(blocks
-        ? [
-            NpdBlocks,
-            SlashCommand,
-            FileHandler.configure({
-              onPaste: (ed, files) => void insertFiles(ed, files),
-              onDrop: (ed, files, pos) => void insertFiles(ed, files, pos),
-            }),
-          ]
-        : []),
+      // 사진·파일 붙여넣기(캡처 후 Ctrl+V)·끌어놓기는 작은 칸에서도 저장소에 올려서 넣음
+      FileHandler.configure({
+        onPaste: (ed, files) => void insertFiles(ed, files),
+        onDrop: (ed, files, pos) => void insertFiles(ed, files, pos),
+      }),
+      ...(blocks ? [NpdBlocks, SlashCommand] : []),
     ],
     content: value || "",
     editorProps: {
@@ -509,11 +513,8 @@ export function RichEditor({
       onChangeCapture={touch}
     >
       {editor && <Toolbar editor={editor} blocks={blocks} uploading={uploading} onPick={() => fileInput.current?.click()} />}
-      {blocks && editor && (
-        <>
-          <BlockHandle editor={editor} />
-          <SelectionBubble editor={editor} />
-          <input
+      {editor && (
+        <input
             ref={fileInput}
             type="file"
             multiple
@@ -524,6 +525,11 @@ export function RichEditor({
               if (files.length) void insertFiles(editor, files);
             }}
           />
+      )}
+      {blocks && editor && (
+        <>
+          <BlockHandle editor={editor} />
+          <SelectionBubble editor={editor} />
         </>
       )}
       {fill ? (

@@ -122,6 +122,11 @@ export const FileImage = Image.extend({
       },
     };
   },
+  // 저장소 이미지는 src 없이 data-path 만 저장하므로, 그것도 이미지로 읽어야 함
+  //   (기본 규칙은 img[src] 만 읽어서, 다시 열면 사진이 사라지고 그대로 저장되면 지워지던 문제)
+  parseHTML() {
+    return [{ tag: "img[data-path]" }, { tag: 'img[src]:not([src^="data:"]):not([src^="blob:"]):not([src^="file:"])' }];
+  },
   addNodeView() {
     return ReactNodeViewRenderer(ImageView);
   },
